@@ -40,7 +40,7 @@ use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSApplicationD
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use objc2_core_graphics::CGContext;
 use objc2_foundation::{NSNotification, NSNotificationCenter, NSRunLoop, NSRunLoopCommonModes, NSTimer};
-use poni_core::addons::{Status as AddonStatus, JAPANESE_READINGS, PRAYER_TIMES};
+use poni_core::addons::{Status as AddonStatus, CLIPBOARD_HISTORY, JAPANESE_READINGS, PRAYER_TIMES};
 use poni_core::frametime::MotionStats;
 use poni_core::phonedrop::{Event as PhoneEvent, QrMatrix};
 use poni_core::geom::{palette, Color, Point, Rect};
@@ -382,6 +382,8 @@ pub struct App {
     oyenza: Option<services::oyenza::OyenzaService>,
     /// The Oyenza page is on screen: its day list stays live (`services::oyenza`).
     oyenza_watch: bool,
+    /// The Today page is on screen: the worker asks for the day (`services::oyenza`).
+    today_watch: bool,
     /// The Health page is on screen (it asks for the phone's steps as it opens).
     health_shown: bool,
     /// Text we put on the clipboard ourselves (not recorded again).
@@ -500,6 +502,7 @@ impl App {
             fullscreen_hidden: false,
             oyenza: None,
             oyenza_watch: false,
+            today_watch: false,
             health_shown: false,
             own_clip: None,
             clipboard: None,
@@ -2253,13 +2256,27 @@ impl App {
     /// awake) and the power source.
     fn oyenza_activity(&self) -> services::oyenza::Activity {
         let p = self.st.power;
-        services::oyenza::Activity { in_use: !self.away.0 && !self.away.1, on_ac: p.on_ac || !p.has_battery, saver: p.saver, watching: self.oyenza_watch }
+        services::oyenza::Activity {
+            in_use: !self.away.0 && !self.away.1,
+            on_ac: p.on_ac || !p.has_battery,
+            saver: p.saver,
+            watching: self.oyenza_watch,
+            today: self.today_watch,
+        }
     }
 
     /// The Oyenza page came on screen or went: the worker keeps its list live only meanwhile.
     fn set_oyenza_watch(&mut self, on: bool) {
         if on != self.oyenza_watch {
             self.oyenza_watch = on;
+            self.tell_oyenza_activity();
+        }
+    }
+
+    /// The Today page came on screen or went: the worker asks for the day only meanwhile.
+    fn set_today_watch(&mut self, on: bool) {
+        if on != self.today_watch {
+            self.today_watch = on;
             self.tell_oyenza_activity();
         }
     }
@@ -2317,14 +2334,21 @@ impl App {
                 self.end_sign_in();
                 self.st.notify(Icon::Check, palette::GREEN, "Connected to Oyenza", format!("as {account}"), 6.0, Some(NoticeAction::OpenPage(PageKind::Oyenza)));
                 self.st.oyenza.link = OyenzaLink::Connected { account };
+                // Signed in from the Today page: back to it, where the day comes in.
+                if std::mem::take(&mut self.st.oyenza.from_today) {
+                    self.st.page = PageKind::Today;
+                    self.expand();
+                }
             }
             OyenzaEvent::ConnectFailed(code) => {
+                self.st.oyenza.from_today = false;
                 self.end_sign_in();
                 self.st.oyenza.link = OyenzaLink::Off;
                 let (title, subtitle) = oyenza::connect_failure_text(&code);
                 self.st.notify(Icon::Unlink, palette::ORANGE, title, subtitle, 6.0, None);
             }
             OyenzaEvent::ConnectCancelled => {
+                self.st.oyenza.from_today = false;
                 self.end_sign_in();
                 self.st.oyenza.link = OyenzaLink::Off;
             }
@@ -2355,6 +2379,17 @@ impl App {
                 self.st.oyenza.updated_unix = Some(self.st.unix);
                 self.remind_bills(&day);
             }
+            OyenzaEvent::Day(day) => {
+                let o = &mut self.st.oyenza;
+                o.agenda = Some(day);
+                o.agenda_unix = Some(self.st.unix);
+                o.agenda_state = crate::state::AgendaState::Ready;
+            }
+            OyenzaEvent::DayUnavailable => {
+                self.st.oyenza.agenda = None;
+                self.st.oyenza.agenda_state = crate::state::AgendaState::Unavailable;
+            }
+            OyenzaEvent::DayFailed => self.st.oyenza.agenda_state = crate::state::AgendaState::Failed,
             OyenzaEvent::Health(next) => {
                 if let Some(steps) = self.st.take_health(next) {
                     let notice = pages::health::goal_notice(steps, now + oyenza::NOTICE_S);
@@ -2706,9 +2741,11 @@ impl App {
             dt = dt.min(period);
         }
         let dt = dt.clamp(0.0, 0.05) as f32;
-        self.set_stats(self.mode == Mode::Expanded(PageKind::Today));
+        // Today's tiles need the readings only while they show (signed out it has the sign-in card, signed in the day).
+        self.set_stats(self.mode == Mode::Expanded(PageKind::Today) && pages::today::shows_tiles(&self.st));
         self.set_sysmon(self.mode == Mode::Expanded(PageKind::System));
         self.set_oyenza_watch(self.mode == Mode::Expanded(PageKind::Oyenza));
+        self.set_today_watch(self.mode == Mode::Expanded(PageKind::Today));
         self.set_health_shown(self.mode == Mode::Expanded(PageKind::Health));
         // The Pill theme floats the island below the top edge (below the menu
         // bar for what hangs under a notch).
@@ -3084,7 +3121,13 @@ impl App {
                 self.on_event(AppEvent::Power(crate::state::PowerState { has_battery: true, percent: 76, charging: true, on_ac: true, saver: false }));
             }
             // CI copies SMOKE_CLIP with pbcopy when this step is ready.
-            "clipboard-copy" => self.st.hud = None,
+            // Clipboard history is an add-on, off by default: on, as its row in
+            // Add-ons does, before CI copies.
+            "clipboard-copy" => {
+                self.st.hud = None;
+                self.st.settings.set_addon(CLIPBOARD_HISTORY.id, true);
+                self.st.cmds.push(Command::SaveSettings);
+            }
             "clipboard-page" => {
                 self.st.page = PageKind::Clipboard;
                 self.expand();
@@ -3340,8 +3383,8 @@ impl App {
     /// service arriving), on top of the island resting.
     fn smoke_ready(&self, name: &str, waited: f64) -> bool {
         match name {
-            // The second stats sample has a real CPU load.
-            "open-today" => self.st.stats.valid && waited > 1.3,
+            // Signed out, Today shows its sign-in card (no stat tiles, no readings).
+            "open-today" => waited > 0.5,
             // Full readings list the apps (their CPU from the second one on);
             // the apps' icons follow from Finder.
             "open-system" => (self.st.system.latest.as_ref().is_some_and(|r| !r.top_cpu.is_empty()) && waited > 1.6) || waited > 5.0,
@@ -3439,17 +3482,20 @@ impl App {
     fn smoke_check(&self, name: &str) -> Option<(&'static str, bool, String)> {
         let gib = |b: u64| b as f64 / (1u64 << 30) as f64;
         match name {
+            // Signed out, Today shows the sign-in card, so its tiles' once-a-second
+            // readings stay off; the readings still work for when the tiles show
+            // (a server without the day): one taken here.
             "open-today" => {
-                let s = &self.st.stats;
-                let ok = s.valid && s.mem_total > 0 && s.disk_total > 0 && s.uptime_s > 0;
+                let s = services::sysstats::sample();
+                let ok = s.valid && s.mem_total > 0 && s.disk_total > 0 && s.uptime_s > 0 && !self.stats_on && !pages::today::shows_tiles(&self.st);
                 let d = format!(
-                    "CPU {:.0} %, memory {:.1} of {:.1} GiB, disk {:.0} GiB free of {:.0}, up {} min",
-                    s.cpu * 100.0,
+                    "one reading: memory {:.1} of {:.1} GiB, disk {:.0} GiB free of {:.0}, up {} min; Today's readings {} (sign-in card)",
                     gib(s.mem_used),
                     gib(s.mem_total),
                     gib(s.disk_free),
                     gib(s.disk_total),
-                    s.uptime_s / 60
+                    s.uptime_s / 60,
+                    if self.stats_on { "on" } else { "off" },
                 );
                 Some(("system-stats", ok, d))
             }
