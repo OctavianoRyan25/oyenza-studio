@@ -959,7 +959,7 @@ fn render_scene(gfx: &mut Gfx, scene: Scene, theme: Theme, notch: Option<Notch>,
             Mode::Expanded(p)
         }
         Scene::UpdateSheet | Scene::UpdateReady => {
-            st.update = crate::state::UpdateView { offer: Some(fake_release()), sheet: true, ready: scene == Scene::UpdateReady, next_start: false };
+            st.update = crate::state::UpdateView { offer: Some(fake_release()), sheet: true, ready: scene == Scene::UpdateReady, ..Default::default() };
             st.page = PageKind::Settings;
             Mode::Expanded(PageKind::Settings)
         }

@@ -549,8 +549,8 @@ impl App {
         if self.smoke.is_none() {
             self.updater = Some(crate::updates::Updater::start(paths::data_dir().join("update.json"), &mut self.st, crate::updates::unix_now()));
         }
-        let offer = self.st.update.offer.as_ref().map(|r| r.version.clone());
-        self.menubar = Some(MenuBar::add(self.mtm, &self.st.settings, self.st.pinned, services::login::status(), &self.st.oyenza.link, offer.as_deref()));
+        let line = crate::updates::menu_line(&self.st, self.updater.is_some());
+        self.menubar = Some(MenuBar::add(self.mtm, &self.st.settings, self.st.pinned, services::login::status(), &self.st.oyenza.link, line));
         self.st.power = services::power::query();
         services::power::watch(self.sink.clone());
         services::audio::start(self.sink.clone());
@@ -680,7 +680,7 @@ impl App {
             Timer::Hover => {
                 if !self.hovering || self.expanded {
                     self.hover_arm = None;
-                } else if self.st.notice.as_ref().is_some_and(|n| n.inline.is_some()) {
+                } else if self.mode == Mode::Notice && self.st.notice.as_ref().is_some_and(|n| n.inline.is_some()) {
                     // A notice with an inline pill stays put under a resting
                     // pointer so the pill can be clicked.
                 } else {
@@ -942,6 +942,7 @@ impl App {
                 self.st.open_update();
                 self.expand();
             }
+            MenuCmd::CheckForUpdates => self.check_for_updates(),
             MenuCmd::RecordScreen => services::recorder::record_screen(self.mtm),
             MenuCmd::Quit => {
                 self.quit(0);
@@ -956,9 +957,9 @@ impl App {
 
     fn refresh_menu(&mut self) {
         let login = services::login::status();
-        let offer = self.st.update.offer.as_ref().map(|r| r.version.clone());
+        let line = crate::updates::menu_line(&self.st, self.updater.is_some());
         if let Some(m) = self.menubar.as_mut() {
-            m.refresh(self.mtm, &self.st.settings, self.st.pinned, login, &self.st.oyenza.link, offer.as_deref());
+            m.refresh(self.mtm, &self.st.settings, self.st.pinned, login, &self.st.oyenza.link, line);
         }
     }
 
@@ -1110,24 +1111,43 @@ impl App {
         let away = self.away.0 || self.away.1 || self.st.power.saver;
         match self.updater.as_ref().and_then(|u| u.due_in(&self.st, now)) {
             Some(0) if away => {}
-            Some(0) => {
-                // The add-on downloader's thread reads it; it starts here when no add-on is on.
-                if self.addons.is_none() {
-                    match services::addons::AddonService::start(self.sink.clone(), Vec::new()) {
-                        Ok(svc) => self.addons = Some(svc),
-                        Err(e) => pwarn!("add-ons: unavailable ({e})"),
-                    }
-                }
-                let started = self.addons.as_ref().map(|a| a.run(services::update::check_job(self.sink.clone()))).is_some();
-                if let Some(u) = self.updater.as_mut() {
-                    u.begin();
-                    if !started {
-                        u.checked(&mut self.st, Err("the add-on thread isn't running".into()), now);
-                        self.schedule_update();
-                    }
-                }
-            }
+            Some(0) => self.read_update_file(now),
             _ => self.schedule_update(),
+        }
+    }
+
+    /// Check for updates… (the menu): read the update file now, even in Low
+    /// Power Mode (someone asked); the answer goes on the island.
+    fn check_for_updates(&mut self) {
+        let now = crate::updates::unix_now();
+        if self.updater.as_mut().is_some_and(|u| u.ask(now)) {
+            self.read_update_file(now);
+        }
+        self.request_frame();
+    }
+
+    /// The add-on downloader's thread, started here when no add-on is on:
+    /// the update file is read and the DMG downloads on it.
+    fn start_addon_thread(&mut self) {
+        if self.addons.is_none() {
+            match services::addons::AddonService::start(self.sink.clone(), Vec::new()) {
+                Ok(svc) => self.addons = Some(svc),
+                Err(e) => pwarn!("add-ons: unavailable ({e})"),
+            }
+        }
+    }
+
+    /// Read the update file on the add-on downloader's thread; the answer
+    /// comes back as `UpdateEvent::Checked`.
+    fn read_update_file(&mut self, now: u64) {
+        self.start_addon_thread();
+        let started = self.addons.as_ref().map(|a| a.run(services::update::check_job(self.sink.clone()))).is_some();
+        if let Some(u) = self.updater.as_mut() {
+            u.begin();
+            if !started {
+                u.checked(&mut self.st, Err("the add-on thread isn't running".into()), now);
+                self.schedule_update();
+            }
         }
     }
 
@@ -1136,17 +1156,10 @@ impl App {
     /// for one already offered). Only where this copy can replace itself.
     fn fetch_setup(&mut self) {
         let Some((d, path)) = self.updater.as_mut().and_then(|u| u.want_setup(&mut self.st)) else { return };
-        if self.addons.is_none() {
-            match services::addons::AddonService::start(self.sink.clone(), Vec::new()) {
-                Ok(svc) => self.addons = Some(svc),
-                Err(e) => pwarn!("add-ons: unavailable ({e})"),
-            }
-        }
+        self.start_addon_thread();
         let job = services::update::download_job(self.sink.clone(), d, path);
-        if self.addons.as_ref().map(|a| a.run(job)).is_none() {
-            if let Some(u) = self.updater.as_mut() {
-                u.fetched(&mut self.st, Err("the add-on thread isn't running".into()));
-            }
+        if self.addons.as_ref().map(|a| a.run(job)).is_none() && self.updater.as_mut().is_some_and(|u| u.fetched(&mut self.st, Err("the add-on thread isn't running".into()))) {
+            self.expand();
         }
     }
 
@@ -1385,18 +1398,21 @@ impl App {
             AppEvent::Phone(e) => self.on_phone(e),
             AppEvent::Addon { id, status } => self.on_addon(id, status),
             AppEvent::Update(services::update::UpdateEvent::Checked(r)) => {
-                if let Some(u) = self.updater.as_mut() {
-                    u.checked(&mut self.st, r, crate::updates::unix_now());
-                }
+                let open = self.updater.as_mut().is_some_and(|u| u.checked(&mut self.st, r, crate::updates::unix_now()));
                 self.schedule_update();
                 self.fetch_setup();
                 self.refresh_menu();
+                // Check for updates… found a new version: the Update sheet.
+                if open {
+                    self.expand();
+                }
                 // A frame, so a new version's notice goes up now, not with the next redraw.
                 self.request_frame();
             }
             AppEvent::Update(services::update::UpdateEvent::Downloaded(r)) => {
-                if let Some(u) = self.updater.as_mut() {
-                    u.fetched(&mut self.st, r);
+                // Check for updates… was waiting for it: the Update sheet.
+                if self.updater.as_mut().is_some_and(|u| u.fetched(&mut self.st, r)) {
+                    self.expand();
                 }
                 self.request_frame();
             }
@@ -1928,8 +1944,10 @@ impl App {
                         self.input.pressed_id = None;
                         self.run_inline_action(a);
                     } else {
-                        // Clicking a notice jumps to its page.
-                        if let Some(n) = self.st.notice.take() {
+                        // Clicking a notice jumps to its page (a new version's
+                        // may be waiting under a volume change or a game's readout).
+                        let shown = self.mode == Mode::Notice;
+                        if let Some(n) = self.st.notice.take_if(|_| shown) {
                             match n.action {
                                 Some(NoticeAction::OpenPage(p)) => self.st.page = p,
                                 Some(NoticeAction::OpenUpdate) => self.st.open_update(),
@@ -2074,6 +2092,7 @@ impl App {
                 self.st.page = self.st.ui.before_settings.take().filter(|p| pages::tabs(&self.st).contains(p)).unwrap_or(PageKind::ALL[0]);
             }
             self.st.update.sheet = false;
+            self.st.update.said = None;
             // A notice that arrived while expanded gets its full time now.
             let min_until = self.st.now + 4.0;
             if let Some(n) = self.st.notice.as_mut() {
@@ -2089,6 +2108,7 @@ impl App {
             // Settings is never where the island opens next time.
             if p != PageKind::Settings {
                 self.st.update.sheet = false;
+                self.st.update.said = None;
                 self.st.store.last_page = p.key().to_string();
                 self.set_timer(Timer::Save, 800);
             } else {
@@ -2136,6 +2156,10 @@ impl App {
             // Gone at once, the way a notice leaves when its time is up.
             if let Some(n) = self.st.notice.as_mut() {
                 n.until = self.st.now;
+            }
+            // A new version's: it doesn't come back.
+            if let Some(u) = self.updater.as_mut() {
+                u.seen(&mut self.st);
             }
             return;
         }
@@ -2243,6 +2267,7 @@ impl App {
                 Command::Play(s) => services::play(s == Sound::Chime),
                 Command::OpenUrl(u) => services::open(&u),
                 Command::Update => self.update_now(),
+                Command::CheckForUpdates => self.check_for_updates(),
                 Command::InstallOnNextStart => {
                     if let Some(u) = self.updater.as_mut() {
                         u.install_on_next_start(&mut self.st);

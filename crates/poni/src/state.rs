@@ -169,6 +169,14 @@ pub struct Notice {
     pub reveal: Option<String>,
 }
 
+impl Notice {
+    /// No time limit (a new version's): it stays until clicked or put away,
+    /// and lets a volume change or a game's readout show over it meanwhile.
+    pub fn stays(&self) -> bool {
+        self.until.is_infinite()
+    }
+}
+
 /// What the app knows about new versions.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct UpdateView {
@@ -183,6 +191,20 @@ pub struct UpdateView {
     pub ready: bool,
     /// Install on next start was picked for it.
     pub next_start: bool,
+    /// This copy reads the update file itself (not a Microsoft Store copy):
+    /// Settings has Check now.
+    pub looks: bool,
+    /// What Settings says in Check now's place since it was clicked, until
+    /// the island closes or the page changes.
+    pub said: Option<Said>,
+}
+
+/// Check now's answer in Settings.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Said {
+    Checking,
+    UpToDate,
+    Failed,
 }
 
 /// A phone wants to send these files; the Shelf asks the person at the PC.
