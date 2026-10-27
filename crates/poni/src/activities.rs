@@ -332,9 +332,12 @@ pub(crate) fn night(st: &AppState) -> bool {
 
 /// Oyen at rest in the idle pill; he follows the cursor while it hovers.
 fn draw_oyen_rest(ui: &mut Ui, st: &AppState, body: Rect, cx: f32, w: f32, bar_y: f32) {
-    let look = ui.input.mouse.map(|p| (p.x - body.center().x) / (body.w / 2.0));
+    let look = (ui.input.eye_look.abs() > 0.002).then_some(ui.input.eye_look);
     let (frame, moving) = oyen::rest(st.now, night(st), look);
     if moving {
+        ui.request_anim();
+    }
+    if look.is_some() && !night(st) {
         ui.request_anim();
     }
     oyen::peek(ui.c, &frame, cx, bar_y, w, body.y + 1.0);
@@ -401,9 +404,10 @@ fn draw_idle(ui: &mut Ui, st: &mut AppState, body: Rect) {
             draw_oyen_rest(ui, st, body, body.center().x, OYEN_IDLE_W, body.bottom() - 7.0);
         }
         IdleStyle::Eyes => {
-            // Eyes glance toward the cursor while hovering.
-            let look = ui.input.mouse.map(|p| ((p.x - body.center().x) / body.w).clamp(-0.5, 0.5) * 6.0).unwrap_or(0.0);
-            draw_eyes(ui, st, body.center().x, cy, look);
+            if ui.input.eye_look.abs() > 0.002 {
+                ui.request_anim();
+            }
+            draw_eyes(ui, st, body.center().x, cy, ui.input.eye_look.clamp(-1.0, 1.0) * 3.0);
         }
         IdleStyle::Minimal | IdleStyle::Hidden => {}
     }

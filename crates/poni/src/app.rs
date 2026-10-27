@@ -60,6 +60,11 @@ const TIMER_RAISE: usize = 9;
 const TIMER_PEEK: usize = 10;
 /// The next read of the update file (`crate::updates`).
 const TIMER_UPDATE: usize = 11;
+/// Checks global cursor proximity only while the idle Eyes look is visible.
+const TIMER_EYE_LOOK: usize = 12;
+const EYE_LOOK_RADIUS: f32 = 40.0;
+const EYE_LOOK_NEAR_MS: u32 = 50;
+const EYE_LOOK_FAR_MS: u32 = 250;
 /// Show over games: how long the readout shows over a game, the least time
 /// between two peeks for a frame-rate drop, and Alt+Shift+F's id.
 const PEEK_S: f64 = 5.0;
@@ -299,6 +304,7 @@ pub struct App {
     island: Island,
     mode: Mode,
     input: Input,
+    eye_look_tracking: bool,
     hits: Vec<Hit>,
     hovering: bool,
     expanded: bool,
@@ -530,6 +536,7 @@ impl App {
             island,
             mode,
             input: Input::default(),
+            eye_look_tracking: false,
             hits: Vec::new(),
             hovering: false,
             expanded: false,
@@ -1257,6 +1264,13 @@ impl App {
             TIMER_WAKE => unsafe {
                 let _ = KillTimer(self.hwnd, TIMER_WAKE);
             },
+            TIMER_EYE_LOOK => {
+                if self.eye_look_visible() {
+                    self.update_eye_look();
+                } else {
+                    self.schedule_eye_look();
+                }
+            }
             TIMER_SAVE => {
                 unsafe {
                     let _ = KillTimer(self.hwnd, TIMER_SAVE);
@@ -2583,6 +2597,82 @@ impl App {
         Point::new(x / s, y / s)
     }
 
+    fn eye_look_visible(&self) -> bool {
+        self.shown
+            && !self.fullscreen_hidden
+            && !self.locked
+            && !self.display_off
+            && !self.st.power.saver
+            && !self.expanded
+            && self.mode == Mode::Idle
+            && (self.st.settings.idle_style == IdleStyle::Eyes
+                || (oyen::on(self.st.settings.theme)
+                    && matches!(self.st.settings.idle_style, IdleStyle::Clock | IdleStyle::Status)))
+            && self.island.settled()
+    }
+
+    fn schedule_eye_look(&mut self) {
+        if self.eye_look_visible() {
+            if !self.eye_look_tracking {
+                // A slow check catches entry into the radius without a global
+                // mouse hook; near the island it speeds up for smooth gaze.
+                unsafe {
+                    SetTimer(self.hwnd, TIMER_EYE_LOOK, EYE_LOOK_FAR_MS, None);
+                }
+                self.eye_look_tracking = true;
+            }
+        } else if self.eye_look_tracking {
+            unsafe {
+                let _ = KillTimer(self.hwnd, TIMER_EYE_LOOK);
+            }
+            self.eye_look_tracking = false;
+            if self.input.proximity_mouse.take().is_some() && !self.fullscreen_hidden {
+                self.request_frame();
+            }
+        }
+    }
+
+    fn update_eye_look(&mut self) {
+        let mut cursor = POINT::default();
+        if unsafe { GetCursorPos(&mut cursor) }.is_err() {
+            return;
+        }
+        let scale = self.gfx.scale();
+        let point = Point::new(
+            (cursor.x - self.surface.x) as f32 / scale,
+            (cursor.y - self.surface.y) as f32 / scale,
+        );
+        let body = self.island.body_rect_at(self.cx);
+        let near = eye_look_point(point, body, self.island.current().r);
+        if near != self.input.proximity_mouse {
+            self.input.proximity_mouse = near;
+            self.request_frame();
+        }
+        let interval = if near.is_some() {
+            EYE_LOOK_NEAR_MS
+        } else {
+            EYE_LOOK_FAR_MS
+        };
+        unsafe {
+            SetTimer(self.hwnd, TIMER_EYE_LOOK, interval, None);
+        }
+    }
+
+    fn step_eye_look(&mut self, dt: f32) {
+        if !self.eye_look_visible() {
+            self.input.eye_look = 0.0;
+            return;
+        }
+        let body = self.island.body_rect_at(self.cx);
+        let target = self
+            .input
+            .proximity_mouse
+            .or(self.input.mouse)
+            .map(|point| ((point.x - body.center().x) / (body.w / 2.0)).clamp(-1.0, 1.0))
+            .unwrap_or(0.0);
+        self.input.eye_look = smooth_eye_look(self.input.eye_look, target, dt);
+    }
+
     fn hit_at(&self, p: Point) -> Option<Hit> {
         self.hits.iter().rev().find(|h| h.rect.contains(p)).copied()
     }
@@ -2845,6 +2935,7 @@ impl App {
         // The Pill theme floats the island below the top edge.
         self.island.set_floating(pill::on(self.st.settings.theme).then_some(pill::TOP_GAP));
         self.island.step(dt, now);
+        self.step_eye_look(dt);
         self.sync_room();
         self.ensure_room();
         self.note_motion(retarget, rendered_at, period, dt as f64);
@@ -3108,6 +3199,7 @@ impl App {
             ambient_divisor(hz, 30.0)
         });
         self.clock.set_active(moving || eq_live || drift_live);
+        self.schedule_eye_look();
         self.schedule_wake();
         if !self.log_queue.is_empty() {
             let lines = std::mem::take(&mut self.log_queue);
@@ -4214,6 +4306,20 @@ fn files_label(n: usize) -> String {
     format!("{n} {}", if n == 1 { "file" } else { "files" })
 }
 
+fn smooth_eye_look(current: f32, target: f32, dt: f32) -> f32 {
+    let blend = 1.0 - (-12.0 * dt).exp();
+    let next = current + (target - current) * blend;
+    if (target - next).abs() < 0.002 { target } else { next }
+}
+
+fn eye_look_point(point: Point, body: Rect, radius: f32) -> Option<Point> {
+    let radius = radius.clamp(0.0, body.w.min(body.h) / 2.0);
+    let qx = (point.x - body.center().x).abs() - (body.w / 2.0 - radius);
+    let qy = (point.y - body.center().y).abs() - (body.h / 2.0 - radius);
+    let outside = qx.max(0.0).hypot(qy.max(0.0)) + qx.max(qy).min(0.0) - radius;
+    (outside <= EYE_LOOK_RADIUS).then_some(point)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4236,6 +4342,30 @@ mod tests {
     /// The pixel centre `over_shadow` tests for the pixel at (x, y) px.
     fn px_centre(x: i32, y: i32, s: f32) -> Point {
         pt((x as f32 + 0.5) / s, (y as f32 + 0.5) / s)
+    }
+
+    #[test]
+    fn idle_eyes_follow_cursor_only_within_radius_of_island() {
+        let body = Rect::new(100.0, 0.0, 80.0, 32.0);
+        assert_eq!(eye_look_point(pt(140.0, 72.0), body, 16.0), Some(pt(140.0, 72.0)));
+        assert_eq!(eye_look_point(pt(60.0, 16.0), body, 16.0), Some(pt(60.0, 16.0)));
+        assert_eq!(eye_look_point(pt(59.9, 16.0), body, 16.0), None);
+        assert_eq!(
+            eye_look_point(pt(50.0, 42.0), body, 16.0),
+            None,
+            "diagonal distance is measured from the rounded corner"
+        );
+    }
+
+    #[test]
+    fn idle_eyes_ease_back_to_centre() {
+        let first = smooth_eye_look(0.8, 0.0, 1.0 / 60.0);
+        assert!(first < 0.8 && first > 0.0);
+        let mut look = first;
+        for _ in 0..60 {
+            look = smooth_eye_look(look, 0.0, 1.0 / 60.0);
+        }
+        assert_eq!(look, 0.0);
     }
 
     #[test]

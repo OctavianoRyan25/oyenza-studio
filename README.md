@@ -225,6 +225,7 @@ The details behind each feature.
 The gear at the top right of the open island opens **Settings**: your Oyenza account first, then the theme, the idle look and the switches below. Right-click the island or the tray icon for every option:
 - the theme: Classic, Oyen, Glass or Pill
 - the idle look: clock, eyes (Oyen in his theme), minimal, hidden until you hover, or a status bar (in Pill; the other themes show the clock)
+- On Windows, the Eyes idle look follows the pointer within 40 DIPs of the island's edge, then eases back to centre.
 - lyrics (and the pronunciation line under Japanese, Korean and Chinese lyrics) and sounds
 - in full-screen apps: hide, or stay on top of borderless games and videos (a game in exclusive full-screen mode still covers it), and show FPS, GPU and CPU over games
 - start with Windows, which version you have (**About Oyenza Studio**, with the build's day; it opens that version's release notes), and quit

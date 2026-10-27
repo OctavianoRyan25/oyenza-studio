@@ -68,6 +68,10 @@ pub struct Hit {
 pub struct Input {
     /// Cursor position in canvas DIPs (None when outside the island).
     pub mouse: Option<Point>,
+    /// Cursor position near the island, used for idle-eye gaze only.
+    pub proximity_mouse: Option<Point>,
+    /// Smoothed horizontal gaze for the resting eyes, from -1 to 1.
+    pub eye_look: f32,
     /// Left button is held.
     pub down: bool,
     /// Widget under the cursor when the button went down.
