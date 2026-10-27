@@ -973,6 +973,15 @@ enum Scene {
     StocksSearch,
     /// Stocks in edit mode: remove buttons and handles.
     StocksEdit,
+    /// A recording with Oyenza Studio Recorder: the Record page while it
+    /// records (`Page(Record)` shows its choices), then the closed island's
+    /// recording pill, recording and paused.
+    RecordLive,
+    RecordActivity,
+    RecordPaused,
+    /// The Add-ons page with the recorder installed: Screen recorder's row
+    /// (seven rows with Stocks, packed closer, the window no taller).
+    AddonsRecorder,
 }
 
 /// A later release than this build, as the update file describes one.
@@ -1005,7 +1014,7 @@ const SAMPLE_SCRIPT: &str = "Hi everyone, this one takes two minutes. Today I'll
 Drop any file on the island and it waits on the Shelf. Press the phone button, scan the code, and the file is on your phone. \
 No cable, no account, nothing to install on the phone.\n\nThat's it. Thanks for watching.";
 
-const SCENES: [Scene; 93] = [
+const SCENES: [Scene; 98] = [
     Scene::IdleClock,
     Scene::IdleEyes,
     Scene::Media,
@@ -1118,6 +1127,14 @@ const SCENES: [Scene; 93] = [
     Scene::StocksPicked,
     Scene::StocksSearch,
     Scene::StocksEdit,
+    // Oyenza Studio Recorder installed: the Record page's choices and the
+    // recording, the closed island while it records and while paused, and
+    // the Add-ons page with Screen recorder's row.
+    Scene::Page(PageKind::Record),
+    Scene::RecordLive,
+    Scene::RecordActivity,
+    Scene::RecordPaused,
+    Scene::AddonsRecorder,
 ];
 
 impl Scene {
@@ -1206,6 +1223,10 @@ impl Scene {
             Scene::StocksPicked => "page-stocks-picked".into(),
             Scene::StocksSearch => "page-stocks-search".into(),
             Scene::StocksEdit => "page-stocks-edit".into(),
+            Scene::RecordLive => "page-record-live".into(),
+            Scene::RecordActivity => "record-activity".into(),
+            Scene::RecordPaused => "record-paused-activity".into(),
+            Scene::AddonsRecorder => "page-addons-recorder".into(),
         }
     }
 
@@ -1242,8 +1263,33 @@ impl Scene {
             Scene::ScriptReading | Scene::ScriptRecorder => Some(PageKind::Script),
             Scene::TodayDay | Scene::TodayNoApps | Scene::TodayTiles | Scene::TodayOff | Scene::TodayPicked => Some(PageKind::Today),
             Scene::StocksPicked | Scene::StocksSearch | Scene::StocksEdit => Some(PageKind::Stocks),
+            Scene::RecordLive => Some(PageKind::Record),
+            Scene::AddonsRecorder => Some(PageKind::Addons),
             _ => None,
         }
+    }
+
+    /// Oyenza Studio Recorder is installed (Record by the Script page's Paste,
+    /// the Record tab, Screen recorder's row).
+    fn recorder(self) -> bool {
+        matches!(
+            self,
+            Scene::ScriptRecorder | Scene::Page(PageKind::Record) | Scene::RecordLive | Scene::RecordActivity | Scene::RecordPaused | Scene::AddonsRecorder
+        )
+    }
+
+    /// What the recorder last told the island: recording (0:42 on the page,
+    /// 12:34 on the closed island) or paused, held still for the pictures.
+    fn recording(self, now: f64) -> crate::state::RecView {
+        use poni_core::recorder::Phase;
+        let (phase, elapsed_ms) = match self {
+            Scene::RecordLive => (Phase::Recording, 42_000),
+            Scene::RecordActivity => (Phase::Recording, 754_000),
+            Scene::RecordPaused => (Phase::Paused, 754_000),
+            _ => return crate::state::RecView::default(),
+        };
+        // Sent "later" than now, so the time doesn't count on while the scene settles.
+        crate::state::RecView { phase: Some(phase), elapsed_ms, at: now + 3600.0, ..Default::default() }
     }
 
     /// Scenes that show something from Oyenza (every other one is signed out,
@@ -2159,7 +2205,10 @@ impl SelfTest {
         } else {
             st.store.script.text.clear();
         }
-        st.recorder = scene == Scene::ScriptRecorder;
+        st.recorder = scene.recorder();
+        st.store.recorder_island = scene.recorder() && scene != Scene::ScriptRecorder;
+        st.rec = scene.recording(now);
+        st.settings.record = poni_core::settings::RecordSettings::default();
         st.system = fake_system(scene);
         st.settings.game_stats = scene.game();
         st.game = fake_game(scene, &mut st.system);
@@ -2388,6 +2437,20 @@ impl SelfTest {
             let wine = under_wine();
             let note = if wine { " (Wine, which can't leave a window out)" } else { "" };
             checks.push(check("script-hidden-from-capture", hidden == can || (wine && !hidden), format!("display affinity: {said}, Windows build {build:?}{note}")));
+        }
+        if matches!(scene, Scene::RecordActivity | Scene::RecordPaused) {
+            // The recording rests on the closed island, ahead of everything else.
+            let (mode, _) = app.selftest_mode();
+            let want = Mode::Activity(crate::activities::Activity::Recording);
+            checks.push(check("recording-pill", mode == want, format!("{mode:?}, want {want:?}")));
+        }
+        if matches!(scene, Scene::RecordLive | Scene::RecordActivity | Scene::RecordPaused) {
+            // The island stays out of the recorder's video: ask Windows.
+            let build = crate::window::windows_build();
+            let can = build.is_some_and(|b| b >= crate::glass::EXCLUDE_FROM_CAPTURE_BUILD);
+            let hidden = crate::window::capture_excluded(app.hwnd());
+            let wine = under_wine();
+            checks.push(check("recording-hidden-from-capture", hidden == can || (wine && !hidden), format!("display affinity: {}, Windows build {build:?}", if hidden { "left out of capture" } else { "in capture" })));
         }
 
         let ok = checks.iter().all(|c| c.ok);
