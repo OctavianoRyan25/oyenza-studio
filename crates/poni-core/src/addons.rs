@@ -162,8 +162,18 @@ pub const STOCKS: Addon = Addon {
     files: &[],
 };
 
+/// Workout reminders from a locally hosted reminder API.
+pub const REMINDERS: Addon = Addon {
+    id: "reminders",
+    title: "Workout reminders",
+    blurb: "Today's workout reminders from your reminder server.",
+    mac_blurb: None,
+    tag: "",
+    files: &[],
+};
+
 /// Every add-on, in the order the Add-ons page lists them.
-pub const ALL: [&Addon; 6] = [&PRAYER_TIMES, &JAPANESE_READINGS, &SCRIPT_READER, &SYSTEM, &HEALTH, &STOCKS];
+pub const ALL: [&Addon; 7] = [&PRAYER_TIMES, &JAPANESE_READINGS, &SCRIPT_READER, &SYSTEM, &HEALTH, &STOCKS, &REMINDERS];
 
 /// Whether Japanese readings switch themselves on for a song whose kanji went
 /// unread for want of them (`wants`): only while the person reads
@@ -267,8 +277,8 @@ mod tests {
     }
 
     #[test]
-    fn system_and_health_are_built_in_add_ons_off_until_switched_on() {
-        for a in [&SYSTEM, &HEALTH, &STOCKS] {
+    fn system_health_stocks_and_reminders_are_built_in_add_ons_off_until_switched_on() {
+        for a in [&SYSTEM, &HEALTH, &STOCKS, &REMINDERS] {
             assert!(!a.downloads() && a.size() == 0, "{}", a.id);
             assert_eq!(Addon::find(a.id), Some(a));
             assert_eq!(Status::Ready.line(a, false), "On");

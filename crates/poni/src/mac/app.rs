@@ -129,6 +129,7 @@ fn enter<R>(f: impl FnOnce(&mut App) -> R) -> Option<R> {
             Deferred::OpenMenu => crate::menubar::open_menu(),
         }
     }
+
     r
 }
 
@@ -215,7 +216,6 @@ pub fn pointer_moved() {
         enter(|a| a.on_pointer(Point::new(x, y)));
     }
 }
-
 fn install_monitors() {
     let mask = NSEventMask::MouseMoved | NSEventMask::LeftMouseDragged;
     let global = RcBlock::new(|_e: NonNull<NSEvent>| pointer_moved());
@@ -414,6 +414,10 @@ pub struct App {
     stocks: Option<services::stocks::StocksService>,
     /// The Stocks page was on screen at the last look (`set_stocks_watch`).
     stocks_open: bool,
+    /// The Reminders page was on screen at the last look.
+    reminders_open: bool,
+    /// The Reminders page's service, started on its first opening.
+    reminders: Option<services::reminders::RemindersService>,
     /// New versions (`crate::updates`); None in the smoke test.
     updater: Option<crate::updates::Updater>,
     /// Prayer times' adzan, while it plays.
@@ -523,6 +527,8 @@ impl App {
             addons: None,
             stocks: None,
             stocks_open: false,
+            reminders_open: false,
+            reminders: None,
             updater: None,
             adzan: Default::default(),
             motion: None,
@@ -1199,6 +1205,7 @@ impl App {
         }
         self.tell_oyenza_activity();
         self.set_stocks_watch();
+        self.set_reminders_watch();
         self.apply_fullscreen();
     }
 
@@ -1403,6 +1410,7 @@ impl App {
             AppEvent::Located(found) => self.on_located(found),
             AppEvent::Cities { file, got } => pages::prayer::cities_came(&mut self.st, file, got),
             AppEvent::Stocks(ev) => self.st.stocks.apply(ev, self.st.unix),
+            AppEvent::Reminders(ev) => self.st.reminders.apply(ev),
             AppEvent::AdzanEnded => self.adzan_ended(),
             AppEvent::Log(s) => pinfo!("{s}"),
             AppEvent::Bluetooth { name, connected, battery, audio } => {
@@ -2231,6 +2239,15 @@ impl App {
                         services::thumbs::app_icon_async(p, pages::system::icon_px(self.gfx.scale()), self.sink.clone());
                     }
                 }
+                Command::RefreshReminders => {
+                    self.st.reminders.loading = true;
+                    self.st.reminders.error = None;
+                    if let Some(s) = &self.reminders {
+                        s.refresh();
+                    } else {
+                        self.st.reminders.apply(services::reminders::ReminderEvent::Failed("Reminders service isn't running".into()));
+                    }
+                }
                 // Show over games reads Windows' frame log; the Mac has no Games view.
                 Command::CheckFps | Command::AllowFps => {}
                 Command::SetPinned(b) => {
@@ -2311,6 +2328,31 @@ impl App {
         }
         if let Some(s) = &self.stocks {
             s.set_watch(w);
+        }
+    }
+
+    fn set_reminders_watch(&mut self) {
+        let away = self.away.0 || self.away.1;
+        let open = self.mode == Mode::Expanded(PageKind::Reminders) && self.st.reminders_on() && !away && !self.fullscreen_hidden;
+        if open == self.reminders_open {
+            return;
+        }
+        self.reminders_open = open;
+        if open {
+            self.st.reminders.loading = true;
+            self.st.reminders.error = None;
+        }
+        if open && self.reminders.is_none() {
+            match services::reminders::RemindersService::start(self.sink.clone()) {
+                Ok(s) => self.reminders = Some(s),
+                Err(e) => {
+                    pwarn!("service reminders: unavailable ({e})");
+                    self.st.reminders.apply(services::reminders::ReminderEvent::Failed(e.to_string()));
+                }
+            }
+        }
+        if let Some(s) = &self.reminders {
+            s.set_open(open);
         }
     }
 
@@ -2736,6 +2778,7 @@ impl App {
             PageKind::System => !self.st.system_on(),
             PageKind::Health => !self.st.health_on(),
             PageKind::Stocks => !self.st.stocks_on(),
+            PageKind::Reminders => !self.st.reminders_on(),
             _ => false,
         };
         if gone {

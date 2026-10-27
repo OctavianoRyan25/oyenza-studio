@@ -60,6 +60,7 @@ fn icon(a: &Addon) -> Icon {
         "system" => Icon::Gauge,
         "health" => Icon::Steps,
         "stocks" => Icon::Stocks,
+        "reminders" => Icon::Clock,
         _ => Icon::Addons,
     }
 }

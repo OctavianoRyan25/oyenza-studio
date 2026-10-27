@@ -140,6 +140,8 @@ pub enum AppEvent {
     Cities { file: String, got: Result<poni_core::prayer::World, String> },
     /// The Stocks page's prices, names and years (`services::stocks`).
     Stocks(crate::services::stocks::StocksEvent),
+    /// Workout reminders, fetched while their page is on screen.
+    Reminders(crate::services::reminders::ReminderEvent),
     /// Prayer times' adzan played to its end (`services::adzan`).
     AdzanEnded,
     /// Free-form log line from a service thread.

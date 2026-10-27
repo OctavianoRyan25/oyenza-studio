@@ -24,6 +24,8 @@ pub mod media;
 #[path = "services/mediaremote.rs"]
 mod mediaremote;
 #[path = "services/romanize.rs"]
+#[path = "../services/reminders.rs"]
+pub mod reminders;
 pub mod romanize;
 #[path = "services/secret.rs"]
 pub mod secret;
@@ -50,6 +52,9 @@ pub mod update;
 // And the Stocks page's prices from oyenza.trade.
 #[path = "../services/stocks.rs"]
 pub mod stocks;
+// And the Workout Reminders page's local API.
+#[path = "../services/reminders.rs"]
+pub mod reminders;
 #[path = "services/location.rs"]
 pub mod location;
 #[path = "services/login.rs"]

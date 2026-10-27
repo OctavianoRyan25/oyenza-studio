@@ -466,6 +466,35 @@ pub struct StocksState {
     pub no_year: Vec<String>,
 }
 
+/// Workout reminders returned by the locally hosted reminder API.
+#[derive(Clone, Debug, Default)]
+pub struct RemindersState {
+    pub loading: bool,
+    pub items: Vec<poni_core::reminders::Reminder>,
+    pub error: Option<String>,
+}
+
+impl RemindersState {
+    pub fn apply(&mut self, ev: crate::services::reminders::ReminderEvent) {
+        use crate::services::reminders::ReminderEvent;
+        match ev {
+            ReminderEvent::Loading => {
+                self.loading = true;
+                self.error = None;
+            }
+            ReminderEvent::Loaded(items) => {
+                self.loading = false;
+                self.items = items;
+                self.error = None;
+            }
+            ReminderEvent::Failed(error) => {
+                self.loading = false;
+                self.error = Some(error);
+            }
+        }
+    }
+}
+
 impl StocksState {
     pub fn apply(&mut self, ev: crate::services::stocks::StocksEvent, unix: i64) {
         use crate::services::stocks::StocksEvent;
@@ -605,6 +634,8 @@ pub struct AppState {
     pub recorder: bool,
     /// The Stocks add-on's prices (its list: `store.stocks`).
     pub stocks: StocksState,
+    /// The Reminders add-on's latest answer, kept in memory only.
+    pub reminders: RemindersState,
     /// Side effects requested during the frame.
     pub cmds: Vec<Command>,
 }
@@ -672,6 +703,7 @@ impl AppState {
             script_hidden: None,
             recorder: false,
             stocks: StocksState::default(),
+            reminders: RemindersState::default(),
             cmds: Vec::new(),
         };
         // A list from a hand-edited file keeps to codes, each once, ten at most.
@@ -689,6 +721,7 @@ impl AppState {
             PageKind::System => !st.system_on(),
             PageKind::Health => !st.health_on(),
             PageKind::Stocks => !st.stocks_on(),
+            PageKind::Reminders => !st.reminders_on(),
             _ => false,
         };
         if off {
@@ -721,6 +754,11 @@ impl AppState {
     /// for only while the page is on screen).
     pub fn stocks_on(&self) -> bool {
         self.addon(poni_core::addons::STOCKS.id) == AddonStatus::Ready
+    }
+
+    /// The Reminders add-on is on: the Reminders tab shows.
+    pub fn reminders_on(&self) -> bool {
+        self.addon(poni_core::addons::REMINDERS.id) == AddonStatus::Ready
     }
 
     /// Prayer times is on and its places are read: the tab and reminders run.

@@ -374,6 +374,8 @@ pub struct App {
     oyenza_watch: bool,
     /// The Stocks page was on screen at the last look (`set_stocks_watch`).
     stocks_open: bool,
+    /// The Reminders page was on screen at the last look.
+    reminders_open: bool,
     /// The Today page is on screen: the worker asks for the day (`services::oyenza`).
     today_watch: bool,
     /// Show over games: the game's frames, counted while the readout shows.
@@ -577,6 +579,7 @@ impl App {
             sysmon_rest: poni_core::sysmon::Rest::default(),
             oyenza_watch: false,
             stocks_open: false,
+            reminders_open: false,
             today_watch: false,
             frames: None,
             game_pid: None,
@@ -1407,6 +1410,28 @@ impl App {
         }
     }
 
+    fn set_reminders_watch(&mut self) {
+        let open = self.mode == Mode::Expanded(PageKind::Reminders)
+            && self.st.reminders_on()
+            && !self.locked
+            && !self.display_off
+            && !self.fullscreen_hidden
+            && self.selftest.is_none();
+        if open == self.reminders_open {
+            return;
+        }
+        self.reminders_open = open;
+        if open {
+            self.st.reminders.loading = true;
+            self.st.reminders.error = None;
+        }
+        if let Some(s) = self.services.as_ref() {
+            if let Err(error) = s.reminders_open(open) {
+                self.st.reminders.apply(services::reminders::ReminderEvent::Failed(error));
+            }
+        }
+    }
+
     fn tell_oyenza_activity(&self) {
         if let Some(s) = self.services.as_ref() {
             s.oyenza_activity(self.oyenza_activity());
@@ -2038,6 +2063,7 @@ impl App {
             AppEvent::Located(found) => self.on_located(found),
             AppEvent::Cities { file, got } => pages::prayer::cities_came(&mut self.st, file, got),
             AppEvent::Stocks(ev) => self.st.stocks.apply(ev, self.st.unix),
+            AppEvent::Reminders(ev) => self.st.reminders.apply(ev),
             AppEvent::AdzanEnded => self.adzan_ended(),
             AppEvent::Log(s) => pinfo!("{s}"),
         }
@@ -2833,6 +2859,7 @@ impl App {
             PageKind::System => !self.st.system_on(),
             PageKind::Health => !self.st.health_on(),
             PageKind::Stocks => !self.st.stocks_on(),
+            PageKind::Reminders => !self.st.reminders_on(),
             _ => false,
         };
         if gone {
@@ -2932,6 +2959,7 @@ impl App {
         self.set_oyenza_watch(self.mode == Mode::Expanded(PageKind::Oyenza));
         self.set_today_watch(self.mode == Mode::Expanded(PageKind::Today));
         self.set_stocks_watch();
+        self.set_reminders_watch();
         // The Pill theme floats the island below the top edge.
         self.island.set_floating(pill::on(self.st.settings.theme).then_some(pill::TOP_GAP));
         self.island.step(dt, now);
@@ -3717,6 +3745,17 @@ impl App {
                         self.st.app_icons.insert(path.clone(), None);
                         self.icon_wait.insert(path.clone());
                         services::imaging::load_thumb_async(path, self.sink.clone());
+                    }
+                }
+                Command::RefreshReminders => {
+                    self.st.reminders.loading = true;
+                    self.st.reminders.error = None;
+                    if let Some(s) = self.services.as_ref() {
+                        if !s.refresh_reminders() {
+                            self.st.reminders.apply(services::reminders::ReminderEvent::Failed("Reminders service isn't running".into()));
+                        }
+                    } else {
+                        self.st.reminders.apply(services::reminders::ReminderEvent::Failed("Reminders service isn't running".into()));
                     }
                 }
                 Command::SetPinned(b) => {

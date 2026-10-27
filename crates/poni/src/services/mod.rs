@@ -23,6 +23,7 @@ pub mod phonedrop;
 pub mod power;
 pub mod psu;
 pub mod recorder;
+pub mod reminders;
 pub mod romanize;
 #[cfg(test)]
 mod romanize_compare;
@@ -51,6 +52,8 @@ pub struct Services {
     addons: Option<addons::AddonService>,
     /// Started the first time the Stocks page opens ([`Services::stocks_watch`]).
     stocks: std::cell::OnceCell<Option<stocks::StocksService>>,
+    /// Started the first time the Reminders page opens.
+    reminders: std::cell::OnceCell<Option<reminders::RemindersService>>,
     sink: EventSink,
 }
 
@@ -81,7 +84,19 @@ impl Services {
         // Asleep unless an add-on is on; then it only checks the files it has.
         let on = poni_core::addons::ALL.iter().filter(|a| settings.addon_on(a.id)).map(|a| a.id).collect();
         let addons = started("add-ons", addons::AddonService::start(sink.clone(), on));
-        Self { media, lyrics, _audio: audio, _bluetooth: bluetooth, fullscreen, oyenza, pairdrop, addons, stocks: std::cell::OnceCell::new(), sink: sink.clone() }
+        Self {
+            media,
+            lyrics,
+            _audio: audio,
+            _bluetooth: bluetooth,
+            fullscreen,
+            oyenza,
+            pairdrop,
+            addons,
+            stocks: std::cell::OnceCell::new(),
+            reminders: std::cell::OnceCell::new(),
+            sink: sink.clone(),
+        }
     }
 
     pub fn stop(self, _helper: HWND) {
@@ -104,6 +119,31 @@ impl Services {
         }
         if let Some(s) = self.stocks.get_or_init(|| started("stocks", stocks::StocksService::start(self.sink.clone()))) {
             s.set_watch(w);
+        }
+    }
+
+    /// The Reminders page only fetches on opening or when Refresh is clicked.
+    pub fn reminders_open(&self, open: bool) -> Result<(), String> {
+        if !open {
+            if let Some(Some(s)) = self.reminders.get() {
+                s.set_open(false);
+            }
+            return Ok(());
+        }
+        if let Some(s) = self.reminders.get_or_init(|| started("reminders", reminders::RemindersService::start(self.sink.clone()))) {
+            s.set_open(open);
+            Ok(())
+        } else {
+            Err("could not start the Reminders service".into())
+        }
+    }
+
+    pub fn refresh_reminders(&self) -> bool {
+        if let Some(Some(s)) = self.reminders.get() {
+            s.refresh();
+            true
+        } else {
+            false
         }
     }
 

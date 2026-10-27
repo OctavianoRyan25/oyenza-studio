@@ -31,6 +31,7 @@ pub mod pomodoro;
 pub mod power;
 pub mod prayer;
 pub mod recorder;
+pub mod reminders;
 pub mod romanize;
 pub mod script;
 pub mod settings;
