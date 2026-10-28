@@ -35,6 +35,7 @@ use crate::app::App;
 use crate::clock;
 use crate::gfx::{Image, ImageData};
 use crate::icons::Icon;
+use crate::pages::usage::Picture as AiPicture;
 use crate::pages::{self, PageKind};
 use crate::paths;
 use crate::png;
@@ -768,6 +769,20 @@ fn seed_stocks(st: &mut AppState, scene: Scene, now: f64) {
     picture(st, shows, now);
 }
 
+/// The AI tab's scenes on made-up readings, every glide at its end
+/// (`pages::usage::picture`); every other scene: nothing read yet and the
+/// notices off, as on a first start (nothing reads it there, and no key
+/// typed in one scene stays for the next).
+fn seed_ai(st: &mut AppState, scene: Scene, now: f64) {
+    if let Scene::Ai(p) = scene {
+        pages::usage::picture(st, p, now);
+    } else {
+        st.usage = crate::state::UsageState::default();
+        st.settings.usage = poni_core::settings::UsageSettings::default();
+        st.ui.usage = pages::usage::UsageUi::default();
+    }
+}
+
 /// Prayer times for its scenes: on, in Kota Jakarta (Edinburgh, picked by
 /// hand, for `PrayerWorld`), its clock 8 minutes before today's Ashar (the
 /// real lists arrive with the add-on's download; these few places are
@@ -1031,6 +1046,13 @@ enum Scene {
     NotifyAsk,
     /// The Notifications page in the download from GitHub, which can't read them.
     NotifyNoPackage,
+    /// The AI tab on made-up readings, as the page's picture shows it
+    /// (`pages::usage::picture`): its plans, troubles, nothing found, ...
+    Ai(AiPicture),
+    /// The AI tab's heads-up notice: Claude Code close to its 5-hour limit.
+    AiNotice,
+    /// ...and Codex out of it, Oyenza Inference connected: its nudge.
+    AiNoticeOut,
 }
 
 /// A later release than this build, as the update file describes one.
@@ -1051,6 +1073,21 @@ fn fake_release() -> poni_core::update::Release {
     }
 }
 
+/// The AI tab's notice in its scenes, worded by the real alerts from two
+/// readings of a 5-hour limit that resets in 2 h 20 min, on the app's clock:
+/// Claude Code from 70 to 90 %, or Codex from 70 % to all used with Oyenza
+/// Inference connected.
+fn ai_alert(st: &AppState, out: bool) -> Option<studio_usage::alerts::Alert> {
+    use studio_usage::{alerts, ProviderId, Snapshot, Source, Window, WindowKind};
+    let id = if out { ProviderId::Codex } else { ProviderId::Claude };
+    let read = |used| Snapshot {
+        windows: vec![Window::new(WindowKind::Session, "5-hour", used).resets(Some(st.unix + 2 * 3600 + 20 * 60)).length(Some(18_000))],
+        ..Snapshot::new(id, st.unix, Source::Online)
+    };
+    let cfg = alerts::AlertCfg { inference: out, ..st.usage_alert_cfg() };
+    alerts::changes(Some(&read(0.7)), &read(if out { 1.0 } else { 0.9 }), st.unix, &cfg).into_iter().next()
+}
+
 /// Running under Wine: its ntdll exports `wine_get_version`.
 fn under_wine() -> bool {
     use windows::core::{s, w};
@@ -1063,7 +1100,7 @@ const SAMPLE_SCRIPT: &str = "Hi everyone, this one takes two minutes. Today I'll
 Drop any file on the island and it waits on the Shelf. Press the phone button, scan the code, and the file is on your phone. \
 No cable, no account, nothing to install on the phone.\n\nThat's it. Thanks for watching.";
 
-const SCENES: [Scene; 104] = [
+const SCENES: [Scene; 114] = [
     Scene::IdleClock,
     Scene::IdleEyes,
     Scene::Media,
@@ -1194,6 +1231,21 @@ const SCENES: [Scene; 104] = [
     Scene::Page(PageKind::Notifications),
     Scene::NotifyAsk,
     Scene::NotifyNoPackage,
+    // The AI tab, a core tab after Focus, in every picture the page has
+    // (`AiPicture::ALL`): plans, troubles, nothing found, the first look,
+    // Oyenza Inference connecting and connected, the Services list and a
+    // key being typed there.
+    Scene::Ai(AiPicture::Plans),
+    Scene::Ai(AiPicture::Troubles),
+    Scene::Ai(AiPicture::Empty),
+    Scene::Ai(AiPicture::Looking),
+    Scene::Ai(AiPicture::Connect),
+    Scene::Ai(AiPicture::Inference),
+    Scene::Ai(AiPicture::Services),
+    Scene::Ai(AiPicture::Key),
+    // Its heads-up notices on the closed island.
+    Scene::AiNotice,
+    Scene::AiNoticeOut,
 ];
 
 impl Scene {
@@ -1291,6 +1343,10 @@ impl Scene {
             Scene::MessageHidden => "message-hidden-notice".into(),
             Scene::NotifyAsk => "page-notifications-ask".into(),
             Scene::NotifyNoPackage => "page-notifications-download".into(),
+            // "page-ai", "page-ai-troubles", ...: the page's own names.
+            Scene::Ai(p) => p.name().into(),
+            Scene::AiNotice => "ai-notice".into(),
+            Scene::AiNoticeOut => "ai-notice-out".into(),
         }
     }
 
@@ -1330,6 +1386,7 @@ impl Scene {
             Scene::RecordLive => Some(PageKind::Record),
             Scene::AddonsRecorder => Some(PageKind::Addons),
             Scene::NotifyAsk | Scene::NotifyNoPackage => Some(PageKind::Notifications),
+            Scene::Ai(_) => Some(PageKind::Ai),
             _ => None,
         }
     }
@@ -1642,6 +1699,11 @@ impl SelfTest {
         // readings); before the scene clock starts, as it takes a moment.
         let (ok, detail) = system_readings(crate::services::sysmon::probe());
         self.checks.push(check("system-readings", ok, detail));
+        // Every picture the AI page has is a scene (the Mac renders take
+        // them all from the same list), so a new one can't go unseen here.
+        let missing: Vec<&str> = AiPicture::ALL.into_iter().filter(|p| !SCENES.contains(&Scene::Ai(*p))).map(AiPicture::name).collect();
+        let detail = if missing.is_empty() { format!("all {} of the AI page's pictures", AiPicture::ALL.len()) } else { format!("no scene for {}", missing.join(", ")) };
+        self.checks.push(check("ai-pictures", missing.is_empty(), detail));
         // Show over games: count Poni's own frames through the whole run.
         let required = std::env::var("PONI_SELFTEST_FRAMES").is_ok_and(|v| v.trim().eq_ignore_ascii_case("required"));
         match crate::services::frames::Frames::start_selftest(std::process::id()) {
@@ -2255,6 +2317,7 @@ impl SelfTest {
                 inline: Some(InlineAction::ShowAmount),
                 reveal: Some("Rp 54.990".into()),
             }),
+            Scene::AiNotice | Scene::AiNoticeOut => ai_alert(st, scene == Scene::AiNoticeOut).map(|a| crate::state::usage_notice(&a, st.accent, until)),
             _ => None,
         };
         st.oyenza = if scene.oyenza() { fake_oyenza(st, scene, now) } else { OyenzaState::default() };
@@ -2328,6 +2391,7 @@ impl SelfTest {
         for (path, rgb) in SAMPLE_ICONS {
             st.app_icons.entry(path.to_string()).or_insert_with(|| Some(sample_icon(rgb)));
         }
+        seed_ai(st, scene, now);
         if let Some(p) = scene.page() {
             st.page = p;
         }

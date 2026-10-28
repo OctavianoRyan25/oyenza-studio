@@ -3,7 +3,7 @@
 
 use crate::activities::{self, Mode};
 use crate::clock;
-use crate::commands::{Command, MediaCmd, NotifyCmd, OyenzaCmd, PairCmd, PhoneCmd};
+use crate::commands::{Command, MediaCmd, NotifyCmd, OyenzaCmd, PairCmd, PhoneCmd, UsageCmd};
 use crate::events::{AppEvent, AppleMusicStatus, EventSink, OyenzaEvent, SendHwnd, WM_APP_APPBAR, WM_APP_EVENT, WM_APP_FRAME, WM_APP_TRAY};
 use crate::gfx::{px_rect, px_union, scale_about, union_rect, Canvas, Gfx, HitMask};
 use crate::icons::Icon;
@@ -419,6 +419,8 @@ pub struct App {
     stocks_open: bool,
     /// The Today page is on screen: the worker asks for the day (`services::oyenza`).
     today_watch: bool,
+    /// What the AI tab's worker was last told (`set_usage_watch`).
+    usage_watch: services::usage::Watch,
     /// Show over games: the game's frames, counted while the readout shows.
     frames: Option<services::frames::Frames>,
     /// The process whose frames count (the full-screen app).
@@ -631,6 +633,7 @@ impl App {
             oyenza_watch: false,
             stocks_open: false,
             today_watch: false,
+            usage_watch: services::usage::Watch::default(),
             frames: None,
             game_pid: None,
             game_peek_until: 0.0,
@@ -1239,6 +1242,7 @@ impl App {
                 self.tell_oyenza_activity();
                 self.tell_sysmon_rest();
                 self.set_stocks_watch();
+                self.set_usage_watch();
                 self.update_due();
                 self.request_frame();
                 Some(LRESULT(1))
@@ -1252,6 +1256,7 @@ impl App {
                 self.tell_oyenza_activity();
                 self.tell_sysmon_rest();
                 self.set_stocks_watch();
+                self.set_usage_watch();
                 self.update_due();
                 self.request_frame();
                 Some(LRESULT(0))
@@ -1431,6 +1436,64 @@ impl App {
             AppleMusicStatus::NoAccess => (palette::ORANGE, "No lyrics from Apple Music", "They need an Apple Music subscription"),
         };
         self.st.notify(Icon::Lyrics, color, title, subtitle, 6.0, None);
+    }
+
+    // ------------------------------------------------------------ AI usage
+
+    /// The AI tab's worker reads while the tab is on screen, or every few
+    /// minutes for the person who switched on its heads-up notices; both rest
+    /// while nobody is at the PC, the notices also on battery saver. Its
+    /// thread starts the first time either wants it (`Services::usage_watch`).
+    fn set_usage_watch(&mut self) {
+        // The self-test's scenes show made-up readings: nothing is read.
+        let here = !self.locked && !self.display_off && self.selftest.is_none();
+        let w = services::usage::Watch {
+            open: here && self.mode == Mode::Expanded(PageKind::Ai),
+            notices: here && self.st.settings.usage.notices && !self.st.power.saver,
+            near_pct: self.st.settings.usage.near_pct,
+            use_24h: self.st.settings.use_24h,
+            hidden: services::usage::picked(&self.st.settings.usage.hidden),
+            added: services::usage::picked(&self.st.settings.usage.added),
+        };
+        // Already told: nothing to do, every frame.
+        if w == self.usage_watch {
+            return;
+        }
+        self.usage_watch = w;
+        if let Some(s) = self.services.as_ref() {
+            s.usage_watch(w);
+        }
+    }
+
+    /// Hide and Show change the AI tab's settings; the rest is its worker's.
+    fn usage_cmd(&mut self, c: UsageCmd) {
+        match c {
+            UsageCmd::Hide(id) | UsageCmd::Show(id) => {
+                let u = &mut self.st.settings.usage;
+                u.hidden.retain(|k| k != id.key());
+                u.added.retain(|k| k != id.key());
+                let list = if matches!(c, UsageCmd::Show(_)) { &mut u.added } else { &mut u.hidden };
+                list.push(id.key().into());
+                let before = self.saved_settings.clone();
+                self.settings_changed(&before);
+                self.save_settings();
+            }
+            c => {
+                if let Some(s) = self.services.as_ref() {
+                    s.usage_cmd(c);
+                }
+            }
+        }
+    }
+
+    /// What the AI tab's worker found goes into `st.usage`. Its heads-up
+    /// notices wait their turn for the island (`tick` puts them up one at a
+    /// time once it is free); the frame `on_event` asks for looks at once.
+    fn on_usage(&mut self, ev: services::usage::UsageEvent) {
+        match ev {
+            services::usage::UsageEvent::Alerts(alerts) => self.st.hold_usage_alerts(alerts),
+            ev => self.st.usage.apply(ev),
+        }
     }
 
     // ------------------------------------------------------------ Oyenza
@@ -1774,6 +1837,10 @@ impl App {
                 let _ = KillTimer(self.hwnd, TIMER_PEEK);
             }
             self.peek_game(if self.st.settings.game_peek { "peeks picked" } else { "picked to stay" });
+        }
+        // The AI tab's heads-up notices: its worker reads every few minutes only while they're on.
+        if before.usage.notices != self.st.settings.usage.notices {
+            self.set_usage_watch();
         }
         // System's readings at rest: its history switch, while System is on.
         let history = self.st.settings.system_history_on();
@@ -2119,6 +2186,7 @@ impl App {
             AppEvent::Cities { file, got } => pages::prayer::cities_came(&mut self.st, file, got),
             AppEvent::Stocks(ev) => self.st.stocks.apply(ev, self.st.unix),
             AppEvent::Notify(ev) => self.on_notify(ev),
+            AppEvent::Usage(ev) => self.on_usage(ev),
             AppEvent::AdzanEnded => self.adzan_ended(),
             AppEvent::Log(s) => pinfo!("{s}"),
         }
@@ -2936,6 +3004,13 @@ impl App {
         if self.updater.as_mut().is_some_and(|u| u.announce(&mut self.st, free)) {
             self.request_frame();
         }
+        // The AI tab's heads-up notices wait the same way, one at a time.
+        // Over a game whose readout only peeks they wait for the game to
+        // leave, as held money notices do, not for a peek.
+        let peeks = self.st.game.active && self.st.settings.game_peek;
+        if self.st.show_usage_notice(free && !peeks, self.expanded && self.st.page == PageKind::Ai) {
+            self.request_frame();
+        }
         if let Some(ended) = self.st.pomodoro.tick(now) {
             pages::focus::on_phase_ended(&mut self.st, ended);
         }
@@ -3047,6 +3122,7 @@ impl App {
         self.set_oyenza_watch(self.mode == Mode::Expanded(PageKind::Oyenza));
         self.set_today_watch(self.mode == Mode::Expanded(PageKind::Today));
         self.set_stocks_watch();
+        self.set_usage_watch();
         // The Pill theme floats the island below the top edge.
         self.island.set_floating(pill::on(self.st.settings.theme).then_some(pill::TOP_GAP));
         self.island.step(dt, now);
@@ -3915,6 +3991,7 @@ impl App {
                 Command::Phone(c) => self.phone_cmd(c),
                 Command::Pair(c) => self.pair_cmd(c),
                 Command::Oyenza(c) => self.oyenza(c),
+                Command::Usage(c) => self.usage_cmd(c),
                 // The self-test's pictures use the files it seeds (none from the website).
                 Command::GetCities(file) => {
                     if self.selftest.is_none() {

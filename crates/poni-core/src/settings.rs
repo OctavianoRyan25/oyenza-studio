@@ -88,7 +88,7 @@ pub struct Settings {
     pub hud_power: bool,
     pub hud_bluetooth: bool,
     pub sounds: bool,
-    /// Page shown first when expanding ("media", "today", "health", "shelf", "tasks", "focus", "oyenza").
+    /// Page shown first when expanding ("media", "today", "health", "shelf", "tasks", "focus", "ai", "oyenza").
     pub start_page: String,
     /// Remember the last page instead of `start_page`.
     pub remember_page: bool,
@@ -116,11 +116,36 @@ pub struct Settings {
     /// front. Its own name: the corner test build wrote `game_readout`
     /// ("peek" as its default) into the files of the people who tried it.
     pub game_peek: bool,
+    /// The AI tab's choices (its readers are the `studio-usage` crate).
+    pub usage: UsageSettings,
     /// The Record page's choices (Oyenza Studio Recorder).
     pub record: RecordSettings,
     /// The Notifications add-on's choices: which apps the island shows, and
     /// whether who it's from and the message show at once.
     pub notifications: crate::notifications::NotificationSettings,
+}
+
+/// What the AI tab shows and whether it gives heads-up notices.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UsageSettings {
+    /// Services the person hid, by key (`studio_usage::ProviderId::key`). Keys this
+    /// version doesn't know are kept, so a newer Studio's choices survive a save.
+    pub hidden: Vec<String>,
+    /// Services shown even when nothing of them is on this computer (the
+    /// ones that take a typed key), by key.
+    pub added: Vec<String>,
+    /// Heads-up notices: a limit getting close, running out or coming back.
+    /// Off (the default), the tab reads only while it is open.
+    pub notices: bool,
+    /// The notice for a limit getting close comes once this much of it is used (percent).
+    pub near_pct: u8,
+}
+
+impl Default for UsageSettings {
+    fn default() -> Self {
+        Self { hidden: Vec::new(), added: Vec::new(), notices: false, near_pct: 80 }
+    }
 }
 
 /// What the Record page records next: its last picks.
@@ -212,6 +237,7 @@ impl Default for Settings {
             prayer: PrayerSettings::default(),
             game_stats: false,
             game_peek: false,
+            usage: UsageSettings::default(),
             record: RecordSettings::default(),
             notifications: crate::notifications::NotificationSettings::default(),
         }
@@ -485,6 +511,21 @@ mod tests {
         // 0.2.4 and 0.2.5 saved Step aside, their default: the island stays now.
         let old: Settings = serde_json::from_str(r#"{"settings_version":3,"step_aside":true}"#).unwrap();
         assert!(!old.sanitized().step_aside);
+    }
+
+    #[test]
+    fn the_ai_tab_hides_nothing_and_keeps_notices_off_until_asked() {
+        let u = Settings::default().usage;
+        assert_eq!(u, UsageSettings { hidden: vec![], added: vec![], notices: false, near_pct: 80 });
+        // Files from before the AI tab, and a hand-written half, fill the rest.
+        let old: Settings = serde_json::from_str(r#"{"settings_version":4}"#).unwrap();
+        assert_eq!(old.usage, u);
+        let s: Settings = serde_json::from_str(r#"{"usage":{"notices":true,"hidden":["codex","future"]}}"#).unwrap();
+        assert!(s.usage.notices && s.usage.added.is_empty());
+        assert_eq!(s.usage.near_pct, 80);
+        // A newer Studio's service stays hidden when this one saves the file.
+        let back: Settings = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
+        assert_eq!(back.usage.hidden, ["codex", "future"]);
     }
 
     #[test]

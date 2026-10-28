@@ -172,6 +172,10 @@ enum Scene {
     RecordActivity,
     RecordPaused,
     AddonsRecorder,
+    /// The AI tab with made-up readings (`pages::usage::picture`): plans
+    /// and limits, a trouble mix, nothing found, the first look, connecting
+    /// and connected Oyenza Inference, the Services list.
+    Ai(crate::pages::usage::Picture),
 }
 
 const SCENES: [Scene; 19] = [
@@ -233,6 +237,10 @@ const ADDON_SCENES: [Scene; 3] = [
 const PRAYER_SCENES: [Scene; 4] = [Scene::Prayer, Scene::PrayerPicker, Scene::PrayerCountdown, Scene::PrayerNotice];
 /// Prayer times abroad, after Today (so every other picture keeps its number).
 const PRAYER_WORLD_SCENES: [Scene; 2] = [Scene::PrayerPickerWorld, Scene::PrayerWorld];
+/// The AI tab in each of its sample states (the page's own list), last of all.
+fn ai_scenes() -> impl Iterator<Item = Scene> {
+    crate::pages::usage::Picture::ALL.into_iter().map(Scene::Ai)
+}
 
 /// The Settings page (behind the gear), after Prayer times.
 const SETTINGS_SCENES: [Scene; 1] = [Scene::Page(PageKind::Settings)];
@@ -310,6 +318,7 @@ impl Scene {
             Scene::RecordActivity => "record-activity".into(),
             Scene::RecordPaused => "record-paused-activity".into(),
             Scene::AddonsRecorder => "page-addons-recorder".into(),
+            Scene::Ai(p) => p.name().into(),
         }
     }
 }
@@ -373,10 +382,10 @@ pub fn run(dir: &str, args: &[String]) -> i32 {
             }
         }
     }
-    // The Japanese song, the Add-ons tab, Prayer times, Settings, the headphone pop-up, Oyenza, Power, Today signed in, Prayer times abroad, Stocks, the Update sheet and Record in every theme, after Pill's.
+    // The Japanese song, the Add-ons tab, Prayer times, Settings, the headphone pop-up, Oyenza, Power, Today signed in, Prayer times abroad, Stocks, the Update sheet, Record and the AI tab in every theme, after Pill's.
     let first = SCENES.len() + SYSTEM_SCENES.len() + 2 + PILL_SCENES.len();
     let mut next = first;
-    let later = SETTINGS_SCENES.into_iter().chain(HEADPHONE_SCENES).chain(OYENZA_SCENES).chain(POWER_SCENES).chain(TODAY_SCENES).chain(PRAYER_WORLD_SCENES).chain(STOCKS_SCENES).chain(UPDATE_SCENES).chain(RECORD_SCENES);
+    let later = SETTINGS_SCENES.into_iter().chain(HEADPHONE_SCENES).chain(OYENZA_SCENES).chain(POWER_SCENES).chain(TODAY_SCENES).chain(PRAYER_WORLD_SCENES).chain(STOCKS_SCENES).chain(UPDATE_SCENES).chain(RECORD_SCENES).chain(ai_scenes());
     for (k, scene) in JA_SCENES.into_iter().chain(ADDON_SCENES).chain(PRAYER_SCENES).chain(later).enumerate() {
         let path = out.join(format!("{:02}-{}{suffix}.png", first + k, scene.name()));
         match render_scene(&mut gfx, scene, theme, notch, ja.as_ref(), &path) {
@@ -1044,6 +1053,12 @@ fn render_scene(gfx: &mut Gfx, scene: Scene, theme: Theme, notch: Option<Notch>,
                     Mode::Expanded(PageKind::Record)
                 }
             }
+        }
+        Scene::Ai(shows) => {
+            let now = st.now;
+            crate::pages::usage::picture(&mut st, shows, now);
+            st.page = PageKind::Ai;
+            Mode::Expanded(PageKind::Ai)
         }
         Scene::Oyenza | Scene::OyenzaCode => {
             st.oyenza = fake_oyenza(&st, scene == Scene::OyenzaCode);
