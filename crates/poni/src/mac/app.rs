@@ -2025,6 +2025,7 @@ impl App {
                             match n.action {
                                 Some(NoticeAction::OpenPage(p)) => self.st.page = p,
                                 Some(NoticeAction::OpenUpdate) => self.st.open_update(),
+                                Some(NoticeAction::OpenApp(_)) => {}
                                 Some(NoticeAction::StartFocus) => {
                                     self.st.page = PageKind::Focus;
                                     if !self.st.pomodoro.is_active() {
@@ -2342,7 +2343,7 @@ impl App {
         }
         match a {
             InlineAction::StartFocus => st.pomodoro.start(st.now),
-            InlineAction::ShowAmount | InlineAction::StopAdzan | InlineAction::Hide | InlineAction::WhatsNew => {}
+            InlineAction::ShowAmount | InlineAction::StopAdzan | InlineAction::Hide | InlineAction::WhatsNew | InlineAction::Open => {}
         }
         let until = st.now + INLINE_DONE_S;
         if let Some(n) = st.notice.as_mut() {
@@ -2460,6 +2461,8 @@ impl App {
                 Command::Pair(_) => {}
                 Command::Oyenza(c) => self.oyenza(c),
                 Command::GetCities(file) => services::cities::fetch(file, self.sink.clone()),
+                // Notifications is a Windows add-on: a Mac can't read other apps' notifications.
+                Command::Notify(_) => {}
             }
         }
         self.sync_phone_offer();

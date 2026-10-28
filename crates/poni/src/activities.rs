@@ -806,8 +806,8 @@ fn inline_done(st: &AppState, a: InlineAction) -> bool {
         InlineAction::StopAdzan => !st.prayer.adzan,
         // Done once clicked: the app puts the check in the notice's icon.
         InlineAction::WhatsNew => st.notice.as_ref().is_some_and(|n| n.icon == Icon::Check),
-        // Hide takes the notice away at once.
-        InlineAction::Hide => false,
+        // Hide and Open take the notice away at once.
+        InlineAction::Hide | InlineAction::Open => false,
     }
 }
 
@@ -855,6 +855,8 @@ pub(crate) fn inline_look(st: &AppState, n: &Notice, a: InlineAction) -> (&'stat
         InlineAction::ShowAmount => ("Show", Some(Icon::Eye), n.color),
         InlineAction::StopAdzan => ("Stop", Some(Icon::Stop), n.color),
         InlineAction::WhatsNew => ("What's new", Some(Icon::Open), n.color),
+        // Another app's notification: open that app.
+        InlineAction::Open => ("Open", Some(Icon::Open), n.color),
         InlineAction::Hide => ("Hide", None, palette::TEXT_DIM),
     }
 }
