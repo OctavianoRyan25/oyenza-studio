@@ -128,6 +128,9 @@ pub enum Icon {
     /// The Oyenza mark (Oyen's head): Oyenza Inference. Not the Oyenza tab,
     /// which is `Wallet`.
     Oyenza,
+    /// A padlock: an IELTS level not open yet. (The IELTS tab and its answer
+    /// button use `Mic`, the Record page's microphone.)
+    Lock,
 }
 
 /// A service's mark, for its card on the AI tab and its notices.
@@ -363,6 +366,10 @@ pub fn parts(icon: Icon) -> &'static [Part] {
         MiniMax => p![f(MINIMAX)],
         OpenRouter => p![f(OPENROUTER)],
         Oyenza => p![f(OYENZA)],
+        Lock => p![
+            s("M6.5 11h11A1.5 1.5 0 0 1 19 12.5v6a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 5 18.5v-6A1.5 1.5 0 0 1 6.5 11z"),
+            s("M8 11V8a4 4 0 0 1 8 0v3"),
+        ],
     }
 }
 
@@ -469,6 +476,7 @@ mod tests {
         Icon::Recorder, Icon::Screen, Icon::AppWindow, Icon::Area, Icon::Camera, Icon::Mic, Icon::Bell, Icon::Message,
         Icon::Ai, Icon::OpenAi, Icon::Claude, Icon::OpenCode, Icon::Gemini, Icon::Cursor, Icon::Copilot, Icon::Kimi, Icon::Zai,
         Icon::MiniMax, Icon::OpenRouter, Icon::Oyenza,
+        Icon::Lock,
     ];
 
     #[test]

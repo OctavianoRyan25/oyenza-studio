@@ -2482,6 +2482,9 @@ impl App {
                 // Notifications is a Windows add-on: a Mac can't read other apps' notifications.
                 Command::Notify(_) => {}
                 Command::Usage(c) => self.usage_cmd(c),
+                // The IELTS coach's microphone and voice come to the Mac with
+                // branch ielts-coach-mac; until then its page says so.
+                Command::Ielts(_) => {}
             }
         }
         self.sync_phone_offer();
@@ -3043,13 +3046,14 @@ impl App {
         self.script_held = held;
         self.prayer_tick();
         self.check_recorder_alive(false);
-        // Prayer times, System, Health, Stocks or Screen recorder switched off: its tab is gone.
+        // Prayer times, System, Health, Stocks, Screen recorder or IELTS switched off: its tab is gone.
         let gone = match self.st.page {
             PageKind::Prayer => !self.st.prayer_on(),
             PageKind::System => !self.st.system_on(),
             PageKind::Health => !self.st.health_on(),
             PageKind::Stocks => !self.st.stocks_on(),
             PageKind::Record => !self.st.record_on(),
+            PageKind::Ielts => !self.st.ielts_on(),
             _ => false,
         };
         if gone {

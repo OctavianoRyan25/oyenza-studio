@@ -1,8 +1,9 @@
 //! Add-ons page, the "+" at the end of the tab row: features only the people
 //! who switch them on get (`poni_core::addons`). Most download then; Script
-//! reader, System, Health, Stocks and Notifications are already in the app
-//! and only show their pages (System's readings, Health's steps, Stocks'
-//! prices and Notifications' listening also run only while they are on).
+//! reader, System, Health, Stocks, Notifications and IELTS are already in
+//! the app and only show their pages (System's readings, Health's steps,
+//! Stocks' prices and Notifications' listening also run only while they are
+//! on; IELTS only while a session runs).
 //!
 //! One row per add-on: its icon, its name, what it does (or where its
 //! download stands, with a bar while it comes in), its size while it is off,
@@ -27,7 +28,8 @@ use poni_core::phonedrop::fmt_bytes;
 const INTRO_H: f32 = 18.0;
 const ROWS_Y: f32 = 28.0;
 /// Five rows fit the island's height (the System page's 256 DIPs), so the
-/// window never grows for this page; a sixth packs them closer ([`row_h`]).
+/// window never grows for this page; a sixth packs them closer ([`row_h`]),
+/// and from seven each row is one line (rows under [`TWO_LINES`]).
 const ROW_H: f32 = 45.0;
 const MAX_H: f32 = 256.0;
 const BADGE: f32 = 36.0;
@@ -38,8 +40,9 @@ const ROW_BLEED: f32 = 8.0;
 const SWITCH_W: f32 = 30.0;
 const SWITCH_H: f32 = 18.0;
 const BAR_H: f32 = 3.0;
-/// Rows shorter than this (eight of them) put the line after the name.
-const TWO_LINES: f32 = 32.0;
+/// Rows shorter than this (seven or more of them: 32 DIPs and less, where two
+/// lines would overlap) put the line after the name.
+const TWO_LINES: f32 = 33.0;
 const BADGE_ONE_LINE: f32 = 24.0;
 /// Between the name and the line after it, on a one-line row.
 const LINE_GAP: f32 = 10.0;
@@ -97,6 +100,7 @@ fn icon(a: &Addon) -> Icon {
         "stocks" => Icon::Stocks,
         "notifications" => Icon::Bell,
         "recorder" => Icon::Recorder,
+        "ielts" => Icon::Mic,
         _ => Icon::Addons,
     }
 }

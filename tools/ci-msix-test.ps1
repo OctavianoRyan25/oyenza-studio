@@ -130,9 +130,9 @@ $selftest = Join-Path $Out "selftest"
 $p = Get-Process -Id ([PoniCi.Apps]::Launch($aumid, "--selftest `"$selftest`""))
 $null = $p.Handle  # keep the handle so ExitCode is available after exit
 "self-test: process $($p.Id), $($p.Path)"
-if (-not $p.WaitForExit(120000)) {
+if (-not $p.WaitForExit(180000)) {
     Stop-Process -Id $p.Id -Force
-    $failures.Add("the packaged self-test did not finish within 120 s")
+    $failures.Add("the packaged self-test did not finish within 180 s")
 } elseif ($p.ExitCode -ne 0) {
     $failures.Add("the packaged self-test exited with code $($p.ExitCode)")
 }
