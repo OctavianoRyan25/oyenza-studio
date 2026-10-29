@@ -2697,6 +2697,80 @@ impl SelfTest {
                             let scale = app.selftest_settings_scale();
                             self.queue_write(&name, w, h, px, scale, None);
                         }
+                        // Frames of a glide redraw the whole window: what one costs.
+                        if k == 0 {
+                            let median = |ms: &[f64]| ms.get(ms.len() / 2).copied().unwrap_or(f64::INFINITY);
+                            let full = app.selftest_settings_frames(30, None);
+                            // A glide's frame: the sidebar's highlight going a few rows down.
+                            let card = app.selftest_settings_card();
+                            let part = app.selftest_settings_frames(30, Some(Rect::new(card.x + 10.0, card.y + 80.0, 200.0, 140.0)));
+                            let detail = format!(
+                                "whole window {:.2} ms (best {:.2}, worst {:.2}), a glide's frame {:.2} ms (worst {:.2}), {} frames each at {:.0} %; 144 Hz leaves 6.94 ms a frame",
+                                median(&full),
+                                full.first().copied().unwrap_or(0.0),
+                                full.last().copied().unwrap_or(0.0),
+                                median(&part),
+                                part.last().copied().unwrap_or(0.0),
+                                full.len(),
+                                app.selftest_settings_scale() * 100.0
+                            );
+                            self.checks.push(check("settings-window-frame", median(&full) < SETTINGS_FRAME_BUDGET_MS, detail));
+                            // A person using it, filmed: what the glides' frames
+                            // drawn in part show must be what drawing it all shows.
+                            // PONI_SELFTEST_FILM keeps every frame as the screen shows
+                            // it (film-settings.bgra: premultiplied BGRA, one frame after
+                            // another) and the part each drew (film-settings.json).
+                            let mut keep = std::env::var_os("PONI_SELFTEST_FILM").and_then(|_| fs::File::create(self.dir.join("film-settings.bgra")).ok()).map(std::io::BufWriter::new);
+                            let mut parts = Vec::new();
+                            let film = app.selftest_settings_film(144.0, |k, _, _, px, part| {
+                                if let Some(out) = keep.as_mut() {
+                                    let _ = std::io::Write::write_all(out, px);
+                                    let part = part.map_or("null".to_string(), |r| format!("[{}, {}, {}, {}]", r.left, r.top, r.right, r.bottom));
+                                    parts.push(format!("{{\"frame\": {k}, \"part\": {part}}}"));
+                                }
+                            });
+                            if let (Some(mut out), Some(f)) = (keep.take(), film.as_ref()) {
+                                let _ = std::io::Write::flush(&mut out);
+                                let json = format!("{{\"fps\": 144, \"width\": {}, \"height\": {}, \"frames\": [\n  {}\n]}}\n", f.size.0, f.size.1, parts.join(",\n  "));
+                                if let Err(e) = fs::write(self.dir.join("film-settings.json"), json) {
+                                    crate::pwarn!("selftest: writing film-settings.json failed: {e}");
+                                }
+                            }
+                            let (ok, detail) = match film {
+                                Some(f) => {
+                                    let ms = &f.partial_ms;
+                                    let worst = match f.worst {
+                                        Some((k, n, r)) => format!("; worst frame {k}: {n} pixels in ({}, {})-({}, {})", r.left, r.top, r.right, r.bottom),
+                                        None => String::new(),
+                                    };
+                                    let missing = if f.missing.is_empty() { String::new() } else { format!("; not found: {}", f.missing.join(", ")) };
+                                    let ok = f.missing.is_empty() && f.differing.is_empty() && ms.len() >= 60;
+                                    // The frames that differ, as runs ("24-30, 151").
+                                    let mut runs: Vec<(usize, usize)> = Vec::new();
+                                    for &k in &f.differing {
+                                        match runs.last_mut() {
+                                            Some(r) if r.1 + 1 == k => r.1 = k,
+                                            _ => runs.push((k, k)),
+                                        }
+                                    }
+                                    let at = runs.iter().map(|&(a, b)| if a == b { a.to_string() } else { format!("{a}-{b}") }).collect::<Vec<_>>().join(", ");
+                                    let detail = format!(
+                                        "{} frames at 144 Hz ({}x{} px), {} of them a glide's drawn in part: {:.2} ms (worst {:.2}); {} frames differ from the window drawn whole{}{worst}{missing}",
+                                        f.frames,
+                                        f.size.0,
+                                        f.size.1,
+                                        ms.len(),
+                                        median(ms),
+                                        ms.last().copied().unwrap_or(0.0),
+                                        f.differing.len(),
+                                        if at.is_empty() { String::new() } else { format!(" ({at})") }
+                                    );
+                                    (ok, detail)
+                                }
+                                None => (false, "its windows didn't open".to_string()),
+                            };
+                            self.checks.push(check("settings-window-glide", ok, detail));
+                        }
                         self.phase = Phase::Window { k: k + 1 };
                     }
                     None => {
@@ -4067,6 +4141,11 @@ fn lyric_line_check(st: &AppState) -> Check {
 
 /// Centre of the first header tab. Mirrors `pages::draw_header`: tabs start at
 /// the header's left edge and are 30 DIPs wide while inactive.
+/// A Settings window frame must draw well inside a 60 Hz refresh even on
+/// CI's small runners (the window glides at the display's rate; 144 Hz
+/// leaves 6.94 ms).
+const SETTINGS_FRAME_BUDGET_MS: f64 = 12.0;
+
 fn first_tab_point(body: Rect) -> Point {
     let header = crate::pages::header_rect(body);
     Point::new(header.x + 15.0, header.center().y)

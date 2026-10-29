@@ -1399,7 +1399,7 @@ impl App {
             let now = self.st.now;
             let Some(w) = self.settings_win.as_mut() else { return };
             let before = w.view.section;
-            let out = w.paint(&mut self.st, now, false);
+            let out = w.paint(&mut self.st, now, None, false);
             let after = w.view.section;
             if out.close {
                 self.close_settings_window();
@@ -1416,15 +1416,35 @@ impl App {
             }
             let dirty = self.settings_win.as_ref().is_some_and(|w| w.view.dirty);
             if !(out.again || ran || dirty) {
-                return;
+                break;
+            }
+        }
+        // A switch sliding, a highlight gliding: the next frames come from the clock.
+        if self.settings_moving() {
+            self.request_frame();
+        }
+    }
+
+    /// Draw the Settings window on this frame when something in it changed
+    /// (all of it), or still glides (only what moves).
+    fn paint_settings_if_dirty(&mut self, deferred: &mut Vec<Deferred>) {
+        let Some(w) = self.settings_win.as_ref() else { return };
+        if w.view.dirty {
+            self.paint_settings(deferred);
+        } else if w.view.moving {
+            self.st.now = self.st.now.max(clock::mono());
+            let now = self.st.now;
+            if let Some(w) = self.settings_win.as_mut() {
+                let only = w.view.next_clip();
+                let _ = w.paint(&mut self.st, now, only, false);
             }
         }
     }
 
-    fn paint_settings_if_dirty(&mut self, deferred: &mut Vec<Deferred>) {
-        if self.settings_win.as_ref().is_some_and(|w| w.view.dirty) {
-            self.paint_settings(deferred);
-        }
+    /// Something in the Settings window glides: the frame clock keeps
+    /// ticking at the display's rate until it has arrived.
+    fn settings_moving(&self) -> bool {
+        self.settings_win.as_ref().is_some_and(|w| w.view.moving)
     }
 
     fn handle_settings_window(&mut self, hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM, deferred: &mut Vec<Deferred>) -> Option<LRESULT> {
@@ -1489,10 +1509,16 @@ impl App {
                 Some(LRESULT(0))
             }
             WM_MOUSEWHEEL => {
-                let delta = ((wp.0 >> 16) & 0xffff) as u16 as i16 as f32 / WHEEL_DELTA as f32;
+                let raw = ((wp.0 >> 16) & 0xffff) as u16 as i16 as i32;
+                let delta = raw as f32 / WHEEL_DELTA as f32;
                 let (x, y) = xy(lp);
                 let p = w.mouse_dip(x - w.at.0, y - w.at.1);
-                w.view.wheel(p, delta);
+                // Whole notches glide; a precision touchpad's small steps follow the fingers.
+                if raw % WHEEL_DELTA as i32 == 0 {
+                    w.view.wheel(p, delta);
+                } else {
+                    w.view.scroll_by(p, delta * crate::settings_window::WHEEL_STEP);
+                }
                 self.paint_settings(deferred);
                 Some(LRESULT(0))
             }
@@ -3405,7 +3431,7 @@ impl App {
             self.tick();
             self.run_commands(deferred);
             self.paint_settings_if_dirty(deferred);
-            self.clock.set_active(false);
+            self.clock.set_active(self.settings_moving());
             self.motion = None;
             self.schedule_wake();
             return;
@@ -3746,7 +3772,8 @@ impl App {
             || glass_moving
             || !self.st.cmds.is_empty()
             || self.outgoing.is_some()
-            || self.page_anim.is_some();
+            || self.page_anim.is_some()
+            || self.settings_moving();
         // The display mode's rate, not the measured period: a divisor that
         // flips between 1 and 2 would be the uneven cadence it exists to avoid.
         let hz = self.clock.nominal_hz();
@@ -5172,12 +5199,41 @@ impl App {
         w.view.show_section(section);
         w.view.input.mouse = None;
         w.set_light(light);
-        let _ = w.paint(&mut self.st, now, true);
+        let _ = w.paint(&mut self.st, now, None, true);
         w.take_capture()
     }
 
     pub fn selftest_close_settings(&mut self) {
         self.close_settings_window();
+    }
+
+    /// Draw the Settings window `n` times: whole (`only` None, as after a
+    /// click) or only a part (as a frame of a glide): each frame's time to
+    /// draw and show (ms), sorted.
+    pub fn selftest_settings_frames(&mut self, n: usize, only: Option<Rect>) -> Vec<f64> {
+        let mut out = Vec::with_capacity(n);
+        for _ in 0..n {
+            self.st.now = self.st.now.max(clock::mono());
+            let now = self.st.now;
+            let Some(w) = self.settings_win.as_mut() else { break };
+            let t = std::time::Instant::now();
+            let _ = w.paint(&mut self.st, now, only, false);
+            out.push(t.elapsed().as_secs_f64() * 1000.0);
+        }
+        out.sort_by(|a, b| a.total_cmp(b));
+        out
+    }
+
+    /// Film the Settings window as a person uses it (`settings_host::film`)
+    /// on this monitor, at `hz`. Its clicks change a setting: it goes back
+    /// as it was, unsaved, afterwards.
+    pub fn selftest_settings_film(&mut self, hz: f64, on_frame: impl FnMut(usize, i32, i32, &[u8], Option<RECT>)) -> Option<settings_host::Film> {
+        let (before, queued) = (self.st.settings.clone(), self.st.cmds.len());
+        let film = settings_host::film(&mut self.st, self.monitor.work, self.gfx.dpi.round() as u32, hz, on_frame);
+        self.st.settings = before;
+        self.st.cmds.truncate(queued);
+        self.st.now = clock::mono();
+        film.inspect_err(|e| pwarn!("selftest: the Settings window's film couldn't open its windows ({e})")).ok()
     }
 
     /// The scale the Settings window draws at.
