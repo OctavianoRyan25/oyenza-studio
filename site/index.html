@@ -490,6 +490,7 @@ main { container-type: inline-size; }
 .price-list { list-style: none; margin: 8px 0 12px; padding: 0; display: grid; gap: 12px; }
 .price-list li { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 10px; align-items: start; }
 .price-list .ico { margin-top: 3px; color: var(--blue); stroke-width: 2.2; }
+.price-list .soon { display: inline-block; margin-left: 4px; padding: 4px 8px; vertical-align: 1px; }
 /* The button sits at the bottom, level with the end of the taller card. */
 .price-card .btn { align-self: flex-start; margin-top: auto; }
 .price-strip { border-radius: 14px; margin-top: 4px; }
@@ -732,7 +733,7 @@ dialog.more-sheet::backdrop { background: rgba(0, 0, 0, 0.42); -webkit-backdrop-
     <div class="side-sec">
       <p class="side-group">Get it</p>
       <a class="side-item" href="#privacy" data-k="privacy data light fast size open source mit"><i class="ic" style="--c:#007aff"><svg class="ico"><use href="#i-lock"/></svg></i><span>Privacy</span></a>
-      <a class="side-item" href="#pricing" data-k="pricing price prices cost free pro plan subscription monthly yearly trial buy notifications whatsapp telegram phone link"><i class="ic" style="--c:#34c759"><svg class="ico"><use href="#i-tag"/></svg></i><span>Pricing</span></a>
+      <a class="side-item" href="#pricing" data-k="pricing price prices cost free pro plan subscription monthly yearly trial buy meeting notes notetaker record transcript summary meet zoom teams notifications whatsapp telegram phone link"><i class="ic" style="--c:#34c759"><svg class="ico"><use href="#i-tag"/></svg></i><span>Pricing</span></a>
       <a class="side-item" href="#get" data-k="install download setup smartscreen dmg get"><i class="ic" style="--c:#0071e3"><svg class="ico"><use href="#i-download"/></svg></i><span>Get Oyenza Studio</span></a>
     </div>
     <p class="side-empty" id="sideEmpty" hidden>No feature by that name. Try "lyrics" or "files".</p>
@@ -789,7 +790,7 @@ dialog.more-sheet::backdrop { background: rgba(0, 0, 0, 0.42); -webkit-backdrop-
             <p class="t-hero">A living notch.</p>
             <a class="t-avail" href="#new">New in 0.2.16: how much of Codex, Claude Code and your other AI plans you have left, right on the island.</a>
             <div class="buybox">
-              <div><b>Free for Windows and Mac</b><span class="fine">Open source · Windows <span data-release="size">3.0&nbsp;MB</span> · Mac <span data-release="mac-size">5.2&nbsp;MB</span> · <a class="notes" data-release="notes" href="https://github.com/lucacadalora/oyenza-studio/releases/latest">What's new in <span data-release="version">0.2.16</span></a></span></div>
+              <div><b>Free for Windows and Mac</b><span class="fine">Open source · Windows <span data-release="size">3.1&nbsp;MB</span> · Mac <span data-release="mac-size">5.3&nbsp;MB</span> · <a class="notes" data-release="notes" href="https://github.com/lucacadalora/oyenza-studio/releases/latest">What's new in <span data-release="version">0.2.16</span></a></span></div>
               <a class="btn dl-primary" href="https://github.com/lucacadalora/oyenza-studio/releases/latest/download/Oyenza-Studio-Setup.exe">Download</a>
             </div>
             <a class="link hero-other dl-other" data-release="mac-link" href="https://github.com/lucacadalora/oyenza-studio/releases/latest/download/Oyenza-Studio-Mac.dmg">Download for Mac</a>
@@ -1525,8 +1526,8 @@ dialog.more-sheet::backdrop { background: rgba(0, 0, 0, 0.42); -webkit-backdrop-
         <div class="fact rv"><svg class="ico"><use href="#i-chip"/></svg><h3 class="t-card" style="font-size:21px;line-height:1.19">Light and smooth.</h3><p class="t-tile">Native Rust, no web view. Nothing drawn while nothing moves.</p></div>
       </div>
       <div class="specs rv">
-        <div class="spec"><b data-release-copy="size">3.0&nbsp;MB</b><span class="t-small">Windows installer</span></div>
-        <div class="spec"><b data-release-copy="mac-size">5.2&nbsp;MB</b><span class="t-small">Mac app</span></div>
+        <div class="spec"><b data-release-copy="size">3.1&nbsp;MB</b><span class="t-small">Windows installer</span></div>
+        <div class="spec"><b data-release-copy="mac-size">5.3&nbsp;MB</b><span class="t-small">Mac app</span></div>
         <div class="spec"><b>240&nbsp;Hz</b><span class="t-small">In step with your screen, on Windows</span></div>
         <div class="spec"><b>MIT</b><span class="t-small">Free and open source</span></div>
       </div>
@@ -1536,7 +1537,7 @@ dialog.more-sheet::backdrop { background: rgba(0, 0, 0, 0.42); -webkit-backdrop-
   <section class="sec" id="pricing" aria-labelledby="pricing-title">
     <div class="content head center rv">
       <h2 class="t-l" id="pricing-title">Studio is free. Pro is on its way.</h2>
-      <p class="t-intro">Everything Studio does today stays free, with no account. <b>Pro brings your messages to the island,</b> for $2.99 a month or $12 a year.</p>
+      <p class="t-intro">Everything Studio does today stays free, with no account. <b>Pro brings Meeting notes,</b> for $2.99 a month or $12 a year.</p>
     </div>
     <div class="content price-cards">
       <article class="price-card rv" aria-labelledby="price-free-title">
@@ -1548,6 +1549,7 @@ dialog.more-sheet::backdrop { background: rgba(0, 0, 0, 0.42); -webkit-backdrop-
           <li><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg><span>Focus, Tasks, the Shelf and Phone drop</span></li>
           <li><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg><span>Today, System, Prayer times and Stocks</span></li>
           <li><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg><span>The Classic, Oyen, Glass and Pill looks</span></li>
+          <li><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg><span>WhatsApp and Telegram on the island, on Windows <span class="soon">Soon</span></span></li>
         </ul>
         <a class="btn" href="#get">Download free</a>
       </article>
@@ -1556,13 +1558,14 @@ dialog.more-sheet::backdrop { background: rgba(0, 0, 0, 0.42); -webkit-backdrop-
         <p class="price"><b>$2.99</b><span class="t-small">a month</span></p>
         <p class="t-small">Or $12 a year, which saves 67%.</p>
         <div class="strip price-strip"><div class="sky-fill"></div><div class="isl">
-          <img class="look-classic" src="assets/shots/classic/message-notice.webp" alt="A WhatsApp message on the island: Mom, Dinner at 7 tonight?, with an Open button" width="387" height="53" loading="lazy">
-          <img class="look-oyen" src="assets/shots/oyen/message-notice.webp" alt="The same WhatsApp message in the Oyen theme" width="387" height="53" loading="lazy">
+          <img class="look-classic" src="assets/shots/classic/notes-activity.webp" alt="Oyen listening on the closed island: the red dot and 12:34 of the meeting so far" width="139" height="32" loading="lazy">
+          <img class="look-oyen" src="assets/shots/oyen/notes-activity.webp" alt="Oyen listening to a meeting on the closed island, in the Oyen theme" width="139" height="32" loading="lazy">
         </div></div>
         <ul class="price-list t-tile">
-          <li><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg><span><b>Your messages on the island:</b> WhatsApp, Telegram, and your phone's through Phone Link.</span></li>
-          <li><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg><span><b>You pick the apps,</b> and can keep who it's from or the message hidden until you press Show.</span></li>
-          <li><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg><span><b>Your messages never leave your PC.</b></span></li>
+          <li><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg><span><b>Meeting notes:</b> one click, and Oyen listens to your meeting, then writes it up.</span></li>
+          <li><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg><span><b>Google Meet, Zoom, Teams or WhatsApp,</b> with no bot joining the call.</span></li>
+          <li><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg><span><b>A summary, the decisions and who does what,</b> with the whole transcript, saved on your PC.</span></li>
+          <li><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg><span><b>The recording goes to Oyenza's server</b> to be written up, and is deleted once your notes are saved.</span></li>
           <li><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg><span><b>Up to 3 PCs</b> on one Oyenza account.</span></li>
         </ul>
         <p class="t-small">On Windows 10 and 11. Prices in US dollars, before tax.</p>
@@ -1571,7 +1574,7 @@ dialog.more-sheet::backdrop { background: rgba(0, 0, 0, 0.42); -webkit-backdrop-
     <div class="content facts price-facts">
       <div class="fact rv"><h3 class="t-card" style="font-size:21px;line-height:1.19">Try Pro for 7 days.</h3><p class="t-tile">Free, and no card. The 7 days start the first time you switch on Pro.</p></div>
       <div class="fact rv"><h3 class="t-card" style="font-size:21px;line-height:1.19">No license key.</h3><p class="t-tile">Pro comes with your Oyenza account. Sign in with a code, like on a TV. Making an account is free.</p></div>
-      <div class="fact rv"><h3 class="t-card" style="font-size:21px;line-height:1.19">Free stays free.</h3><p class="t-tile">If Pro ends, notifications switch off with one notice that says why. Everything else keeps working.</p></div>
+      <div class="fact rv"><h3 class="t-card" style="font-size:21px;line-height:1.19">Free stays free.</h3><p class="t-tile">If Pro ends, only Meeting notes stop. The notes you made stay on your PC, and everything else keeps working.</p></div>
     </div>
   </section>
 
@@ -1784,7 +1787,7 @@ dialog.more-sheet::backdrop { background: rgba(0, 0, 0, 0.42); -webkit-backdrop-
     </ul>
     <p><b>New in 0.2.1:</b> Japanese readings and Script reader are add-ons in the Mac's Add-ons tab, so the download is about a third of what it was.</p>
     <p><b>New in 0.2.3:</b> Prayer times, in the Mac's Add-ons tab: Location Services finds your city, or you type it, the adzan plays when it's time, and around the notch the countdown sits beside the camera.</p>
-    <p>macOS 14 or later, on Apple silicon or Intel. One app for both, <span data-release-copy="mac-size">5.2&nbsp;MB</span>. It's signed with an Apple Developer ID and checked by Apple, so it opens like any Mac app.</p>
+    <p>macOS 14 or later, on Apple silicon or Intel. One app for both, <span data-release-copy="mac-size">5.3&nbsp;MB</span>. It's signed with an Apple Developer ID and checked by Apple, so it opens like any Mac app.</p>
   </div>
 </dialog>
 <dialog class="more-sheet" id="m-oyenza" aria-labelledby="m-oyenza-t">
