@@ -112,6 +112,8 @@ pub enum OyenzaEvent {
     /// The server has no day for the Today page (a server from before it, or
     /// switched off there): the page stays as it was before signing in mattered.
     DayUnavailable,
+    /// Whether the account has Studio Pro (a server from before Pro: no).
+    Pro(bool),
     /// The day couldn't be read just now (offline, a server error).
     DayFailed,
     NoteSaved(Vec<Saved>),
@@ -178,6 +180,16 @@ pub enum AppEvent {
     Stocks(crate::services::stocks::StocksEvent),
     /// Workout reminders, fetched while their page is on screen.
     Reminders(crate::services::reminders::ReminderEvent),
+    /// One of yt-dlp's lines for download `id` (`services::downloader`).
+    Download { id: u64, line: poni_core::ytdlp::Line },
+    /// yt-dlp for download `id` ended (`ok`: it exited with 0).
+    DownloadEnded { id: u64, ok: bool },
+    /// The Notifications add-on: what Windows allows, and new notifications
+    /// (`services::notifications`).
+    Notify(crate::services::notifications::NotifyEvent),
+    /// The AI tab's readings, typed keys, inference.oyenza.com's link and
+    /// heads-up notices (`services::usage`).
+    Usage(crate::services::usage::UsageEvent),
     /// The adzan finished playing, or couldn't play on.
     AdzanEnded,
     /// Start with Windows is on (true) or off, read for the Settings page.
@@ -186,4 +198,15 @@ pub enum AppEvent {
     Log(String),
     /// The Glass theme's screen copy has new pixels (or stopped).
     Backdrop,
+    /// The IELTS worker's answer (`services::ielts`).
+    Ielts(Box<poni_core::ielts::Reply>),
+    /// Oyen's clip finished playing, or couldn't play on (`services::voice`).
+    VoiceEnded,
+    /// The microphone stopped mid-answer (`services::mic`): why, for the log.
+    MicFailed(String),
+    /// The meeting being handed over, as it goes (`services::notes`).
+    Notes(Box<poni_core::notes::Reply>),
+    /// The meeting's recording stopped by itself: the longest meeting taken,
+    /// or the disk wouldn't take more (`services::notes`).
+    NotesStopped(poni_core::notes::CaptureIssue),
 }

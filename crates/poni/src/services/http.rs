@@ -1,4 +1,4 @@
-//! Minimal HTTPS requests (GET, POST/DELETE with a JSON body, and file downloads with progress) over WinRT `Windows.Web.Http.HttpClient`.
+//! Minimal HTTPS requests (GET, POST/DELETE with a JSON body, POST of raw bytes, and file downloads with progress) over WinRT `Windows.Web.Http.HttpClient`.
 //!
 //! Every call blocks until the response (headers and body) has arrived or the
 //! timeout has passed, so use it on worker threads only, never on the UI
@@ -14,8 +14,10 @@ use std::sync::mpsc::{self, RecvTimeoutError};
 use std::time::{Duration, Instant};
 use windows::core::{h, RuntimeType, HSTRING};
 use windows::Foundation::{AsyncOperationProgressHandler, AsyncOperationWithProgressCompletedHandler, AsyncStatus, IAsyncOperationWithProgress, Uri};
-use windows::Storage::Streams::{DataReader, IBuffer, UnicodeEncoding};
-use windows::Web::Http::{HttpClient, HttpMethod, HttpProgress, HttpRequestMessage, HttpResponseMessage, HttpStringContent, IHttpContent};
+use windows::Storage::Streams::{DataReader, DataWriter, IBuffer, UnicodeEncoding};
+use windows::Web::Http::Filters::{HttpBaseProtocolFilter, HttpCacheReadBehavior, HttpCacheWriteBehavior, HttpCookieUsageBehavior};
+use windows::Web::Http::Headers::HttpMediaTypeHeaderValue;
+use windows::Web::Http::{HttpBufferContent, HttpClient, HttpMethod, HttpProgress, HttpRequestMessage, HttpResponseMessage, HttpStringContent, IHttpContent};
 use windows::Win32::Foundation::RPC_E_CHANGED_MODE;
 use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED};
 
@@ -27,6 +29,10 @@ pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(8);
 
 /// Bodies larger than this are refused (nothing Poni fetches comes close).
 const MAX_BODY_BYTES: u64 = 8 * 1024 * 1024;
+
+/// A request body past this size (an IELTS answer's audio) goes as UTF-8
+/// bytes: a string body is copied to UTF-16 first, then encoded again.
+const BIG_BODY_BYTES: usize = 256 * 1024;
 
 /// The methods [`Client::send`] speaks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -105,6 +111,12 @@ impl Drop for MtaGuard {
 ///
 /// Create and use it on one worker thread that is in a COM apartment (see
 /// [`MtaGuard`]); drop it before that apartment is left.
+///
+/// Windows keeps an HTTP cache under it: a repeated GET whose answer had no
+/// `Cache-Control` comes back from that cache and never reaches the server
+/// (`cache_tests` below). A server whose answers change sends
+/// `Cache-Control: no-store`, as api.oyenza.app does on every `/island` route
+/// and oyenza.trade on the Stocks routes.
 pub struct Client {
     http: HttpClient,
 }
@@ -112,6 +124,48 @@ pub struct Client {
 impl Client {
     pub fn new(user_agent: &str) -> Result<Self, FetchError> {
         let http = HttpClient::new().map_err(|e| other("could not create an HTTP client", &e))?;
+        Self::with(http, user_agent)
+    }
+
+    /// A client of its own for requests that carry another service's
+    /// sign-in (the AI tab's worker): it follows no redirect (a 3xx comes
+    /// back as the answer, so no header goes on to another host), stores and
+    /// sends no cookies beyond the request's own `Cookie` header, never reads
+    /// or writes the disk cache, and never puts up a sign-in prompt.
+    pub fn private(user_agent: &str) -> Result<Self, FetchError> {
+        let filter = HttpBaseProtocolFilter::new().map_err(|e| other("could not create an HTTP filter", &e))?;
+        let set = || -> windows::core::Result<()> {
+            filter.SetAllowAutoRedirect(false)?;
+            filter.SetAllowUI(false)?;
+            filter.SetCookieUsageBehavior(HttpCookieUsageBehavior::NoCookies)?;
+            let cache = filter.CacheControl()?;
+            // NoCache came with Windows 10 1607; before it, MostRecent still
+            // asks the server every time.
+            cache.SetReadBehavior(HttpCacheReadBehavior::NoCache).or_else(|_| cache.SetReadBehavior(HttpCacheReadBehavior::MostRecent))?;
+            cache.SetWriteBehavior(HttpCacheWriteBehavior::NoCache)
+        };
+        set().map_err(|e| other("could not set up the HTTP filter", &e))?;
+        let http = HttpClient::Create(&filter).map_err(|e| other("could not create an HTTP client", &e))?;
+        Self::with(http, user_agent)
+    }
+
+    /// A client that never answers from Windows' HTTP cache and writes
+    /// nothing to it. The default one serves a second GET of the same URL
+    /// from the cache when the server sent no `Cache-Control` (the IELTS
+    /// ladder after a session: "answered in 1 ms", the server never asked).
+    pub fn uncached(user_agent: &str) -> Result<Self, FetchError> {
+        let http = (|| {
+            let filter = HttpBaseProtocolFilter::new()?;
+            let cache = filter.CacheControl()?;
+            cache.SetReadBehavior(HttpCacheReadBehavior::MostRecent)?;
+            cache.SetWriteBehavior(HttpCacheWriteBehavior::NoCache)?;
+            HttpClient::Create(&filter)
+        })()
+        .map_err(|e| other("could not create an HTTP client", &e))?;
+        Self::with(http, user_agent)
+    }
+
+    fn with(http: HttpClient, user_agent: &str) -> Result<Self, FetchError> {
         let headers = http.DefaultRequestHeaders().map_err(|e| other("could not set request headers", &e))?;
         let ua = HSTRING::from(user_agent);
         // The typed collection validates "product/version (comment)"; fall
@@ -158,11 +212,48 @@ impl Client {
                 return Err(FetchError::Other(format!("could not set the {name} header")));
             }
         }
-        if let Some(body) = json {
+        if let Some(body) = json.filter(|b| b.len() > BIG_BODY_BYTES) {
+            let content = (|| {
+                let writer = DataWriter::new()?;
+                writer.WriteBytes(body.as_bytes())?;
+                let content = HttpBufferContent::CreateFromBuffer(&writer.DetachBuffer()?)?;
+                content.Headers()?.SetContentType(&HttpMediaTypeHeaderValue::Create(h!("application/json"))?)?;
+                request.SetContent(&content)
+            })();
+            content.map_err(|e| other("could not set the request body", &e))?;
+        } else if let Some(body) = json {
             let content = HttpStringContent::CreateFromStringWithEncodingAndMediaType(&HSTRING::from(body), UnicodeEncoding::Utf8, h!("application/json"))
                 .map_err(|e| other("could not set the request body", &e))?;
             request.SetContent(&content).map_err(|e| other("could not set the request body", &e))?;
         }
+        let op = self.http.SendRequestAsync(&request).map_err(classify)?;
+        let resp = wait(&op, deadline)?;
+        let out = read_response(&resp, deadline);
+        let _ = resp.Close();
+        let _ = request.Close();
+        out
+    }
+
+    /// POST `body` as it is (a meeting's audio part), with its media type.
+    pub fn post_bytes(&self, url: &str, headers: &[(&str, &str)], body: &[u8], content_type: &str, timeout: Duration) -> Result<Response, FetchError> {
+        let deadline = Instant::now() + timeout;
+        let uri = Uri::CreateUri(&HSTRING::from(url)).map_err(|e| other("invalid URL", &e))?;
+        let request = HttpRequestMessage::Create(&HttpMethod::Post().map_err(|e| other("could not create a request", &e))?, &uri)
+            .map_err(|e| other("could not create a request", &e))?;
+        let request_headers = request.Headers().map_err(|e| other("could not set request headers", &e))?;
+        for (name, value) in headers {
+            if !request_headers.TryAppendWithoutValidation(&HSTRING::from(*name), &HSTRING::from(*value)).unwrap_or(false) {
+                return Err(FetchError::Other(format!("could not set the {name} header")));
+            }
+        }
+        let content = (|| {
+            let writer = DataWriter::new()?;
+            writer.WriteBytes(body)?;
+            let content = HttpBufferContent::CreateFromBuffer(&writer.DetachBuffer()?)?;
+            content.Headers()?.SetContentType(&HttpMediaTypeHeaderValue::Create(&HSTRING::from(content_type))?)?;
+            request.SetContent(&content)
+        })();
+        content.map_err(|e| other("could not set the request body", &e))?;
         let op = self.http.SendRequestAsync(&request).map_err(classify)?;
         let resp = wait(&op, deadline)?;
         let out = read_response(&resp, deadline);
@@ -479,5 +570,79 @@ mod pure {
             assert_eq!(network_detail(12029), "could not connect");
             assert_eq!(network_detail(12100), "network error");
         }
+    }
+}
+
+/// Windows' HTTP cache, against a server of the test's own on 127.0.0.1 (CI's
+/// Windows unit tests): the same client and call as the Oyenza worker's.
+#[cfg(test)]
+mod cache_tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::net::{TcpListener, TcpStream};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    /// GETs one new URL twice, with a key in `Authorization`, from a server
+    /// that numbers its answers and adds `headers` to each. Returns the
+    /// bodies and how many GETs reached the server.
+    fn ask_twice(headers: &'static str) -> (Vec<String>, usize) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("a port");
+        let port = listener.local_addr().expect("its address").port();
+        let hits = Arc::new(AtomicUsize::new(0));
+        let counted = hits.clone();
+        std::thread::spawn(move || {
+            for c in listener.incoming().flatten() {
+                let counted = counted.clone();
+                std::thread::spawn(move || answer(c, &counted, headers));
+            }
+        });
+        // A URL no earlier run asked for: the cache outlives the process.
+        let run = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
+        let url = format!("http://127.0.0.1:{port}/island/bills?tz=%2B07%3A00&days=35&run={run}");
+        let _com = MtaGuard::new();
+        let client = Client::new("OyenzaStudio/test").expect("a client");
+        let bodies = (0..2)
+            .map(|_| client.send(Method::Get, &url, &[("Authorization", "Bearer oyzd_test")], None, DEFAULT_TIMEOUT).expect("an answer").body)
+            .collect();
+        (bodies, hits.load(Ordering::SeqCst))
+    }
+
+    /// One request on `c`: counted and answered only if it is a GET (a
+    /// connection opened ahead and never used is neither).
+    fn answer(mut c: TcpStream, counted: &AtomicUsize, headers: &str) {
+        let _ = c.set_read_timeout(Some(Duration::from_secs(5)));
+        let (mut head, mut chunk) = (Vec::new(), [0u8; 4096]);
+        while !head.windows(4).any(|w| w == b"\r\n\r\n") {
+            match c.read(&mut chunk) {
+                Ok(0) | Err(_) => return,
+                Ok(n) => head.extend_from_slice(&chunk[..n]),
+            }
+        }
+        if !head.starts_with(b"GET ") {
+            return;
+        }
+        let n = counted.fetch_add(1, Ordering::SeqCst) + 1;
+        let body = format!(r#"{{"hit":{n}}}"#);
+        let _ = c.write_all(
+            format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n{headers}Connection: close\r\n\r\n{body}", body.len()).as_bytes(),
+        );
+    }
+
+    #[test]
+    fn a_repeated_get_without_cache_headers_comes_from_windows_cache() {
+        // oyenza-studio#137's IELTS self-test found this. If it ever stops
+        // happening, the test below proves nothing: look at both again.
+        let (bodies, hits) = ask_twice("");
+        assert_eq!((hits, bodies[1].as_str()), (1, r#"{"hit":1}"#), "answers {bodies:?}");
+    }
+
+    #[test]
+    fn a_repeated_get_answered_with_no_store_reaches_the_server() {
+        // The headers api.oyenza.app sends on every /island route
+        // (catat-server's requirePc), so Today's bills, Health steps and
+        // money are asked for every time.
+        let (bodies, hits) = ask_twice("Cache-Control: no-store\r\nVary: Origin\r\n");
+        assert_eq!((hits, bodies[1].as_str()), (2, r#"{"hit":2}"#), "answers {bodies:?}");
     }
 }

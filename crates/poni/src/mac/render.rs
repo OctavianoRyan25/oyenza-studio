@@ -163,6 +163,36 @@ enum Scene {
     /// next start.
     UpdateSheet,
     UpdateReady,
+    /// Oyenza Studio Recorder installed and heard from: the Record page's
+    /// choices, the page while it records (0:42), the closed island's
+    /// recording (12:34; around a notch its dot and time sit in the ears),
+    /// paused, and the Add-ons tab with Screen recorder's row.
+    Record,
+    RecordLive,
+    RecordActivity,
+    RecordPaused,
+    AddonsRecorder,
+    /// The AI tab with made-up readings (`pages::usage::picture`): plans
+    /// and limits, a trouble mix, nothing found, the first look, connecting
+    /// and connected Oyenza Inference, the Services list.
+    Ai(crate::pages::usage::Picture),
+    /// The IELTS add-on signed in: on the Mac, for now, the coach is on its
+    /// way (its microphone and voice come with branch ielts-coach-mac).
+    Ielts,
+    /// The Downloader, signed in with Studio Pro: the Downloads page with a
+    /// download coming in, one waiting, one done and one failed; the closed
+    /// island while it downloads (around a notch, the ring and the percent
+    /// sit in the ears); and the Add-ons tab with its row.
+    Downloads,
+    DownloadActivity,
+    AddonsDownloader,
+    /// Meeting notes, signed in with Studio Pro: the page while Oyen listens
+    /// (42 s in), the closed island 12 minutes in (around a notch, Oyen in
+    /// one ear and the time in the other), and the Add-ons tab with every
+    /// Pro add-on listed.
+    NotesListening,
+    NotesActivity,
+    AddonsPro,
 }
 
 const SCENES: [Scene; 19] = [
@@ -224,6 +254,10 @@ const ADDON_SCENES: [Scene; 3] = [
 const PRAYER_SCENES: [Scene; 4] = [Scene::Prayer, Scene::PrayerPicker, Scene::PrayerCountdown, Scene::PrayerNotice];
 /// Prayer times abroad, after Today (so every other picture keeps its number).
 const PRAYER_WORLD_SCENES: [Scene; 2] = [Scene::PrayerPickerWorld, Scene::PrayerWorld];
+/// The AI tab in each of its sample states (the page's own list), last of all.
+fn ai_scenes() -> impl Iterator<Item = Scene> {
+    crate::pages::usage::Picture::ALL.into_iter().map(Scene::Ai)
+}
 
 /// The Settings page (behind the gear), after Prayer times.
 const SETTINGS_SCENES: [Scene; 1] = [Scene::Page(PageKind::Settings)];
@@ -244,6 +278,15 @@ const STOCKS_SCENES: [Scene; 4] = [
 ];
 /// The Update sheet, after Stocks (so every other picture keeps its number).
 const UPDATE_SCENES: [Scene; 2] = [Scene::UpdateSheet, Scene::UpdateReady];
+/// The Record page and the recording on the closed island, every theme,
+/// after the Update sheet (so every other picture keeps its number).
+const RECORD_SCENES: [Scene; 5] = [Scene::Record, Scene::RecordLive, Scene::RecordActivity, Scene::RecordPaused, Scene::AddonsRecorder];
+/// The IELTS page, after the Update sheet.
+const IELTS_SCENES: [Scene; 1] = [Scene::Ielts];
+/// The Downloader, last of all (so every other picture keeps its number).
+const DOWNLOAD_SCENES: [Scene; 3] = [Scene::Downloads, Scene::DownloadActivity, Scene::AddonsDownloader];
+/// Meeting notes and every Pro add-on, after the Downloader.
+const NOTES_SCENES: [Scene; 3] = [Scene::NotesListening, Scene::NotesActivity, Scene::AddonsPro];
 
 impl Scene {
     fn name(self) -> String {
@@ -293,6 +336,19 @@ impl Scene {
             Scene::Stocks(p) => format!("page-stocks-{}", format!("{p:?}").to_lowercase()),
             Scene::UpdateSheet => "page-update-sheet".into(),
             Scene::UpdateReady => "page-update-ready".into(),
+            Scene::Record => "page-record".into(),
+            Scene::RecordLive => "page-record-live".into(),
+            Scene::RecordActivity => "record-activity".into(),
+            Scene::RecordPaused => "record-paused-activity".into(),
+            Scene::AddonsRecorder => "page-addons-recorder".into(),
+            Scene::Ai(p) => p.name().into(),
+            Scene::Ielts => "page-ielts".into(),
+            Scene::Downloads => "page-downloads".into(),
+            Scene::DownloadActivity => "download-activity".into(),
+            Scene::AddonsDownloader => "page-addons-downloader".into(),
+            Scene::NotesListening => "page-notes-listening".into(),
+            Scene::NotesActivity => "notes-activity".into(),
+            Scene::AddonsPro => "page-addons-pro".into(),
         }
     }
 }
@@ -356,10 +412,10 @@ pub fn run(dir: &str, args: &[String]) -> i32 {
             }
         }
     }
-    // The Japanese song, the Add-ons tab, Prayer times, Settings, the headphone pop-up, Oyenza, Power, Today signed in, Prayer times abroad, Stocks and the Update sheet in every theme, after Pill's.
+    // The Japanese song, the Add-ons tab, Prayer times, Settings, the headphone pop-up, Oyenza, Power, Today signed in, Prayer times abroad, Stocks, the Update sheet, Record, the AI tab, IELTS and the Downloader in every theme, after Pill's.
     let first = SCENES.len() + SYSTEM_SCENES.len() + 2 + PILL_SCENES.len();
     let mut next = first;
-    let later = SETTINGS_SCENES.into_iter().chain(HEADPHONE_SCENES).chain(OYENZA_SCENES).chain(POWER_SCENES).chain(TODAY_SCENES).chain(PRAYER_WORLD_SCENES).chain(STOCKS_SCENES).chain(UPDATE_SCENES);
+    let later = SETTINGS_SCENES.into_iter().chain(HEADPHONE_SCENES).chain(OYENZA_SCENES).chain(POWER_SCENES).chain(TODAY_SCENES).chain(PRAYER_WORLD_SCENES).chain(STOCKS_SCENES).chain(UPDATE_SCENES).chain(RECORD_SCENES).chain(ai_scenes()).chain(IELTS_SCENES).chain(DOWNLOAD_SCENES).chain(NOTES_SCENES);
     for (k, scene) in JA_SCENES.into_iter().chain(ADDON_SCENES).chain(PRAYER_SCENES).chain(later).enumerate() {
         let path = out.join(format!("{:02}-{}{suffix}.png", first + k, scene.name()));
         match render_scene(&mut gfx, scene, theme, notch, ja.as_ref(), &path) {
@@ -371,6 +427,21 @@ pub fn run(dir: &str, args: &[String]) -> i32 {
         }
         next = first + k + 1;
     }
+    // The Settings window's sections, dark, two of them light, and Island
+    // with Stay on top picked.
+    for (k, (section, light, on_top)) in settings_shots().into_iter().enumerate() {
+        let mode = if light { "-light" } else { "" };
+        let pick = if on_top { "-on-top" } else { "" };
+        let path = out.join(format!("{:02}-settings-window-{}{pick}{mode}{suffix}.png", next + k, section.key()));
+        match render_settings(&mut gfx, section, theme, light, on_top, &path) {
+            Ok(()) => println!("render: {}", path.display()),
+            Err(e) => {
+                eprintln!("render: {}: {e}", path.display());
+                failed += 1;
+            }
+        }
+    }
+    let next = next + settings_shots().len();
     // Around a notch, last: the Eyes look's hide and seek with the camera.
     if let Some(n) = notch {
         let path = out.join(format!("{next:02}-peek-frames{suffix}.png"));
@@ -388,6 +459,45 @@ pub fn run(dir: &str, args: &[String]) -> i32 {
     } else {
         0
     }
+}
+
+/// The Settings window's pictures: every section dark, General and
+/// Appearance light too, and Island with In full-screen apps set to Stay on
+/// top (the website's full-screen chapter). Each is (section, light, Stay on top).
+fn settings_shots() -> Vec<(crate::settings_window::Section, bool, bool)> {
+    use crate::settings_window::Section;
+    let mut v: Vec<_> = Section::ALL.into_iter().filter(|s| *s != Section::Prayer).map(|s| (s, false, false)).collect();
+    v.extend([(Section::General, true, false), (Section::Appearance, true, false), (Section::Island, false, true)]);
+    v
+}
+
+/// One section of the Settings window as the Mac shows it, light or dark,
+/// with the system's window buttons where macOS puts them (the real window
+/// draws those itself; the smoke test pictures that one). `on_top`: In
+/// full-screen apps set to Stay on top instead of Hide.
+fn render_settings(gfx: &mut Gfx, section: crate::settings_window::Section, theme: Theme, light: bool, on_top: bool, path: &Path) -> Result<(), String> {
+    use crate::settings_host::{HEIGHT, TITLEBAR, WIDTH};
+    let (w, h) = (WIDTH as f32, HEIGHT as f32);
+    let (w_px, h_px) = ((w * SCALE) as usize, (h * SCALE) as usize);
+    let bmp = Bitmap::new(w_px, h_px, SCALE).ok_or("no bitmap")?;
+    let mut st = AppState::new(Settings { theme, hide_in_fullscreen: !on_top, ..Settings::default() }, Store::default());
+    st.accent = crate::app::theme_accent(theme);
+    st.ui.autostart = Some(true);
+    let mut view = crate::settings_window::View::new(section);
+    let frame = crate::settings_window::Frame { card: Rect::new(0.0, 0.0, w, h), own_chrome: false, top: TITLEBAR, still: true };
+    gfx.set_look(poni_core::look::glass(light));
+    {
+        let mut c = gfx.canvas(bmp.ctx());
+        let _ = view.draw(&mut c, &mut st, NOW_MONO, frame, light);
+        // Close, minimise and zoom, 12 points across and 20 apart from 20 in.
+        c.unthemed(|c| {
+            for (i, rgb) in [0xFF5F57u32, 0xFEBC2E, 0x28C840].into_iter().enumerate() {
+                c.fill_circle(Point::new(20.0 + 6.0 + i as f32 * 20.0, TITLEBAR / 2.0), 6.0, Color::hex(rgb));
+            }
+        });
+    }
+    let px = bmp.pixels();
+    crate::png::save_pbgra(path, w_px as u32, h_px as u32, &px)
 }
 
 /// The island opening from rest onto the Today page (left column) and
@@ -669,6 +779,38 @@ const SAMPLE_PLACES: &str = r#"{"places":[
     {"id":"kab-bandung-barat","label":"Kab. Bandung Barat","kind":"kab","prov":"Jawa Barat","lat":-6.85,"lng":107.5167,"tz":"Asia/Jakarta","h0":-2},
     {"id":"makkah","label":"Makkah","kind":"abroad","prov":"Arab Saudi","lat":21.4225,"lng":39.8261,"tz":"Asia/Riyadh","method":"ummalqura"}
 ]}"#;
+
+/// The Downloads page's list, newest first, as on Windows (`selftest.rs`):
+/// a YouTube link whose puzzle QuickJS is solving, a film coming in from
+/// PeerTube, a private video that failed and a finished film, moved along by
+/// yt-dlp's lines as the app moves them, so the bar and the island's pill
+/// count the bytes as they do for real. No pictures, so nothing is fetched.
+fn seed_downloads(st: &mut AppState) {
+    use poni_core::downloads::{Jobs, State};
+    use poni_core::ytdlp::{Line, Mode as Get};
+    let unix = st.unix;
+    let info = |title: &str, site: &str| Line::Info { title: title.into(), site: site.into(), thumbnail: None, duration_s: None };
+    let mut jobs = Jobs::default();
+    // Oldest first: each one goes on top of the list.
+    let bunny = jobs.add("https://archive.org/details/BigBuckBunny_124".into(), Get::Video, unix - 25 * 60);
+    jobs.starting(bunny);
+    jobs.apply(bunny, info("Big Buck Bunny", "Internet Archive"));
+    jobs.apply(bunny, Line::Done { path: "/Users/sample/Downloads/Big Buck Bunny.mp4".into() });
+    jobs.set_size(bunny, 332_000_000);
+    let private = jobs.add("https://video.blender.org/w/4e0c1f7a-93b2-4d58-a6e1-2f8b9c3d7a51".into(), Get::Video, unix - 4 * 60);
+    // yt-dlp's private video (`ytdlp::Problem::Private`), in the page's words.
+    if let Some(job) = jobs.list.iter_mut().find(|j| j.id == private) {
+        job.state = State::Failed("This video is private".into());
+    }
+    let film = jobs.add("https://video.blender.org/w/b29290cc-dc51-4a12-bcb2-2aa5fece7605".into(), Get::Video, unix - 50);
+    jobs.starting(film);
+    jobs.apply(film, info("OVERGROWN: a feature film project by Blender Studio", "PeerTube"));
+    jobs.apply(film, Line::Progress { done: 8_600_000, total: Some(23_300_000), speed: Some(2_100_000.0), eta_s: Some(7) });
+    let youtube = jobs.add("https://www.youtube.com/watch?v=aqz-KE-bpKQ".into(), Get::Video, unix - 20);
+    jobs.starting(youtube);
+    jobs.apply(youtube, Line::Solving);
+    st.downloads = jobs;
+}
 
 /// The Health add-on switched on, as its row in Add-ons does.
 fn health_on(st: &mut AppState) {
@@ -959,7 +1101,7 @@ fn render_scene(gfx: &mut Gfx, scene: Scene, theme: Theme, notch: Option<Notch>,
             Mode::Expanded(p)
         }
         Scene::UpdateSheet | Scene::UpdateReady => {
-            st.update = crate::state::UpdateView { offer: Some(fake_release()), sheet: true, ready: scene == Scene::UpdateReady, next_start: false };
+            st.update = crate::state::UpdateView { offer: Some(fake_release()), sheet: true, ready: scene == Scene::UpdateReady, ..Default::default() };
             st.page = PageKind::Settings;
             Mode::Expanded(PageKind::Settings)
         }
@@ -995,6 +1137,67 @@ fn render_scene(gfx: &mut Gfx, scene: Scene, theme: Theme, notch: Option<Notch>,
             st.page = PageKind::Today;
             Mode::Expanded(PageKind::Today)
         }
+        Scene::Ielts => {
+            // IELTS is an add-on, off by default: on for its own scene, signed in.
+            st.settings.set_addon(poni_core::addons::IELTS.id, true);
+            st.addons.insert(poni_core::addons::IELTS.id, AddonStatus::Ready);
+            st.oyenza = fake_oyenza(&st, false);
+            st.ielts = poni_core::ielts::Coach::sample(poni_core::ielts::Sample::Home, st.now);
+            st.page = PageKind::Ielts;
+            Mode::Expanded(PageKind::Ielts)
+        }
+        Scene::Downloads | Scene::DownloadActivity | Scene::AddonsDownloader => {
+            // The Downloader is an add-on, off by default, for Studio Pro: on
+            // for its own scenes, signed in with Pro.
+            st.oyenza = fake_oyenza(&st, false);
+            st.oyenza.pro = Some(true);
+            st.downloader_offered = true;
+            st.settings.set_addon(poni_core::addons::DOWNLOADER.id, true);
+            st.addons.insert(poni_core::addons::DOWNLOADER.id, AddonStatus::Ready);
+            match scene {
+                Scene::AddonsDownloader => {
+                    st.page = PageKind::Addons;
+                    Mode::Expanded(PageKind::Addons)
+                }
+                Scene::DownloadActivity => {
+                    seed_downloads(&mut st);
+                    Mode::Activity(activities::Activity::Download)
+                }
+                _ => {
+                    seed_downloads(&mut st);
+                    st.page = PageKind::Downloads;
+                    Mode::Expanded(PageKind::Downloads)
+                }
+            }
+        }
+        Scene::NotesListening | Scene::NotesActivity | Scene::AddonsPro => {
+            // Signed in with Studio Pro, every Pro add-on switched on.
+            st.oyenza = fake_oyenza(&st, false);
+            st.oyenza.pro = Some(true);
+            st.downloader_offered = true;
+            for a in [poni_core::addons::MEETING_NOTES, poni_core::addons::IELTS, poni_core::addons::DOWNLOADER] {
+                st.settings.set_addon(a.id, true);
+                st.addons.insert(a.id, AddonStatus::Ready);
+            }
+            let now = st.now;
+            match scene {
+                Scene::AddonsPro => {
+                    st.page = PageKind::Addons;
+                    Mode::Expanded(PageKind::Addons)
+                }
+                _ => {
+                    let secs = if scene == Scene::NotesListening { 42.5 } else { 754.5 };
+                    st.notes.started(now - secs, true, true);
+                    (st.notes.mic, st.notes.pc) = (0.32, 0.55);
+                    if scene == Scene::NotesActivity {
+                        Mode::Activity(activities::Activity::Notes)
+                    } else {
+                        st.page = PageKind::Notes;
+                        Mode::Expanded(PageKind::Notes)
+                    }
+                }
+            }
+        }
         Scene::Stocks(shows) => {
             // Stocks is an add-on, off by default: on for its own scenes.
             st.settings.set_addon(poni_core::addons::STOCKS.id, true);
@@ -1003,6 +1206,36 @@ fn render_scene(gfx: &mut Gfx, scene: Scene, theme: Theme, notch: Option<Notch>,
             crate::pages::stocks::picture(&mut st, shows, now);
             st.page = PageKind::Stocks;
             Mode::Expanded(PageKind::Stocks)
+        }
+        Scene::Record | Scene::RecordLive | Scene::RecordActivity | Scene::RecordPaused | Scene::AddonsRecorder => {
+            use poni_core::recorder::Phase as RecPhase;
+            st.recorder = true;
+            st.store.recorder_island = true;
+            let (phase, elapsed_ms) = match scene {
+                Scene::RecordLive => (Some(RecPhase::Recording), 42_000),
+                Scene::RecordActivity => (Some(RecPhase::Recording), 754_000),
+                Scene::RecordPaused => (Some(RecPhase::Paused), 754_000),
+                _ => (None, 0),
+            };
+            // Heard at the picture's moment, so the time shows as sent.
+            st.rec = crate::state::RecView { phase, elapsed_ms, at: NOW_MONO, ..Default::default() };
+            match scene {
+                Scene::RecordActivity | Scene::RecordPaused => Mode::Activity(activities::Activity::Recording),
+                Scene::AddonsRecorder => {
+                    st.page = PageKind::Addons;
+                    Mode::Expanded(PageKind::Addons)
+                }
+                _ => {
+                    st.page = PageKind::Record;
+                    Mode::Expanded(PageKind::Record)
+                }
+            }
+        }
+        Scene::Ai(shows) => {
+            let now = st.now;
+            crate::pages::usage::picture(&mut st, shows, now);
+            st.page = PageKind::Ai;
+            Mode::Expanded(PageKind::Ai)
         }
         Scene::Oyenza | Scene::OyenzaCode => {
             st.oyenza = fake_oyenza(&st, scene == Scene::OyenzaCode);
