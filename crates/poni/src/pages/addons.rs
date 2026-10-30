@@ -5,18 +5,20 @@
 //! Stocks' prices and Notifications' listening also run only while they are
 //! on; IELTS only while a session runs).
 //!
-//! One row per add-on: its icon, its name, what it does (or where its
-//! download stands, with a bar while it comes in), its size while it is off,
-//! ("Built in" for one with nothing to download), and a switch. The whole
-//! row toggles, as in Settings: on downloads the add-on and starts it, off
-//! stops it and deletes its files
-//! (`Command::SaveSettings`; the app passes the change to `services::addons`).
-//! One whose files this build can't get yet stays off and says so
-//! (`Status::Unpinned`).
+//! One row per add-on: a badge (accent while it is on, neutral while off), its
+//! name, what it does (or where its download stands, with a thin bar along the
+//! row's bottom edge while it comes in), its size while it is off ("Built in"
+//! for one with nothing to download), and a switch. The whole row toggles, as
+//! in Settings: on downloads the add-on and starts it, off stops it and
+//! deletes its files (`Command::SaveSettings`; the app passes the change to
+//! `services::addons`). One whose files this build can't get yet stays off and
+//! says so (`Status::Unpinned`).
+//!
 //! Both apps list every add-on ([`OFFERED`]) but Screen recorder, which shows
 //! once Oyenza Studio Recorder is installed, and Notifications, which only
-//! Windows has ([`rows`]). Eight rows (the recorder's with them) are one
-//! line each: the name, then the line after it.
+//! Windows has ([`rows`]). Rows scale between `ROW_MIN` and `ROW_MAX` so the
+//! page keeps the island's height; seven or more are one line each: the name,
+//! then the line after it.
 //!
 //! A Studio Pro add-on's row says Pro where its size was. IELTS and the
 //! Downloader are listed only for an account with Pro ([`rows`]); the
@@ -33,11 +35,12 @@ use poni_core::phonedrop::fmt_bytes;
 
 const INTRO_H: f32 = 16.0;
 const ROWS_Y: f32 = 24.0;
-/// Rows shrink to fit [`FIT_H`], but never below `ROW_MIN` (text stays legible)
-/// nor above `ROW_MAX`.
+/// Rows shrink to fit [`FIT_H`], but never below `ROW_MIN` (a line each, still
+/// legible) nor above `ROW_MAX`.
 const ROW_MAX: f32 = 45.0;
-const ROW_MIN: f32 = 38.0;
+const ROW_MIN: f32 = 20.0;
 const FIT_H: f32 = 256.0;
+const MAX_H: f32 = FIT_H + INTRO_H + ROWS_Y;
 const BADGE_MAX: f32 = 36.0;
 const TEXT_X: f32 = 48.0;
 const TITLE_H: f32 = 19.0;
@@ -47,9 +50,9 @@ const ROW_BLEED: f32 = 8.0;
 const SWITCH_W: f32 = 30.0;
 const SWITCH_H: f32 = 18.0;
 const BAR_H: f32 = 3.0;
-/// Rows shorter than this (seven or more of them: 32 DIPs and less, where two
-/// lines would overlap) put the line after the name.
-const TWO_LINES: f32 = 33.0;
+/// Rows shorter than this (seven or more of them: 33 DIPs and less, where the
+/// name and the line would overlap) put the line after the name.
+const TWO_LINES: f32 = TITLE_H + LINE_H;
 const BADGE_ONE_LINE: f32 = 24.0;
 /// Between the name and the line after it, on a one-line row.
 const LINE_GAP: f32 = 10.0;
@@ -118,23 +121,6 @@ fn status(st: &AppState, a: &Addon) -> Status {
     }
 }
 
-/// Where `a` stands: Screen recorder follows the recorder's install
-/// (`Settings::recorder_on`); the Downloader is off without Pro, even
-/// switched on before; the others, their own switch and download.
-fn status(st: &AppState, a: &Addon) -> Status {
-    if a.id == addons::SCREEN_RECORDER.id {
-        if st.record_on() {
-            Status::Ready
-        } else {
-            Status::Off
-        }
-    } else if needs_pro(a) && st.studio_pro() != Some(true) {
-        Status::Off
-    } else {
-        st.addon(a.id)
-    }
-}
-
 /// Each add-on's icon on its badge.
 fn icon(a: &Addon) -> Icon {
     match a.id {
@@ -155,10 +141,11 @@ fn icon(a: &Addon) -> Icon {
 }
 
 pub fn draw(ui: &mut Ui, st: &mut AppState, area: Rect) {
-    let n = OFFERED.len();
-    let on_count = OFFERED.iter().filter(|a| st.settings.addon_on(a.id)).count();
+    let list = rows(st);
+    let n = list.len();
+    let on_count = list.iter().filter(|a| status(st, a).is_on()).count();
 
-    // Header: a short intro on the left, "3 of 7 on" on the right.
+    // Header: a short intro on the left, "3 of 9 on" on the right.
     let count = format!("{on_count} of {n} on");
     let right = TextStyle::footnote().color(palette::TEXT_DIM).right();
     let cw = ui.c.measure(&count, &right, 200.0).0.ceil();
@@ -170,7 +157,7 @@ pub fn draw(ui: &mut Ui, st: &mut AppState, area: Rect) {
     // The last row's hover wash meets the Pill card's rounded corners.
     let card = super::card::pill_card(st, area);
     let h = row_h(n);
-    for (i, a) in OFFERED.iter().enumerate() {
+    for (i, a) in list.iter().enumerate() {
         let row = Rect::new(area.x, area.y + ROWS_Y + i as f32 * h, area.w, h);
         if addon_row(ui, st, row, i, a, card) {
             let on = status(st, a).is_on();
@@ -187,9 +174,10 @@ pub fn draw(ui: &mut Ui, st: &mut AppState, area: Rect) {
 
 /// Returns true when the row was clicked. `card`: the Pill card (`card::pill_card`).
 fn addon_row(ui: &mut Ui, st: &AppState, r: Rect, i: usize, a: &Addon, card: Option<(Rect, f32)>) -> bool {
-    let status = st.addon(a.id);
+    let status = status(st, a);
     let on = status.is_on();
     let accent = st.accent;
+    let one_line = r.h < TWO_LINES;
     let hit = Rect::new(r.x - ROW_BLEED, r.y + 2.0, r.w + 2.0 * ROW_BLEED, r.h - 4.0);
     let resp = ui.button(wid_n("addons.row", i as u64), hit);
     if resp.hovered || resp.pressed {
@@ -199,7 +187,11 @@ fn addon_row(ui: &mut Ui, st: &AppState, r: Rect, i: usize, a: &Addon, card: Opt
 
     // The badge scales with the row, centred in a fixed column so the text
     // never shifts. Only an add-on that is on wears the accent.
-    let badge = (r.h * 0.78).round().min(BADGE_MAX);
+    let badge = if one_line {
+        BADGE_ONE_LINE.min(r.h - 2.0)
+    } else {
+        (r.h * 0.78).round().min(BADGE_MAX)
+    };
     let bx = r.x + BADGE_MAX / 2.0;
     let (fill, ink) = if on {
         (accent.with_alpha(0.22), accent)
@@ -212,29 +204,50 @@ fn addon_row(ui: &mut Ui, st: &AppState, r: Rect, i: usize, a: &Addon, card: Opt
 
     let sw = Rect::new(r.right() - SWITCH_W, cy - SWITCH_H / 2.0, SWITCH_W, SWITCH_H);
     crate::pages::settings::draw_switch(ui.c, sw, on, accent);
-    // The size, while there is a choice to make.
+    // The size (or Pro), while there is a choice to make.
     let mut text_right = sw.x - 16.0;
     if status == Status::Off {
-        let size = if a.pro { "Pro".to_string() } else if a.downloads() { fmt_bytes(a.size()) } else { "Built in".to_string() };
-        let style = if a.pro { TextStyle::footnote().weight(Weight::Semibold).color(crate::oyen::ORANGE).right() } else { TextStyle::footnote().color(palette::TEXT_DIM).right() };
+        let size = if a.pro {
+            "Pro".to_string()
+        } else if a.downloads() {
+            fmt_bytes(a.size())
+        } else {
+            "Built in".to_string()
+        };
+        let style = if a.pro {
+            TextStyle::footnote().weight(Weight::Semibold).color(crate::oyen::ORANGE).right()
+        } else {
+            TextStyle::footnote().color(palette::TEXT_DIM).right()
+        };
         let w = ui.c.measure(&size, &style, 200.0).0.ceil();
         ui.c.text(&size, Rect::new(sw.x - 10.0 - w, r.y, w, r.h), &style);
         text_right = sw.x - 10.0 - w - 16.0;
     }
 
-    // Title + line, vertically centred; lifted a little while a bar is shown.
     let x = r.x + TEXT_X;
     let w = (text_right - x).max(0.0);
     let progress = status.progress();
-    let lift = if progress.is_some() { 2.0 } else { 0.0 };
-    let top = r.y + ((r.h - (TITLE_H + LINE_H)) / 2.0).floor() - lift;
-    ui.c.text(a.title, Rect::new(x, top, w, TITLE_H), &TextStyle::headline());
+    let line = status.line(a, MAC);
     let line_color = if status == Status::Failed { palette::ORANGE } else { palette::TEXT_DIM };
-    ui.c.text(
-        &status.line(a, MAC),
-        Rect::new(x, top + TITLE_H, w, LINE_H),
-        &TextStyle::footnote().color(line_color),
-    );
+    let head = TextStyle::headline();
+    let foot = TextStyle::footnote().color(line_color);
+    // Lifted a little while a bar is shown along the bottom edge.
+    let lift = if progress.is_some() { 2.0 } else { 0.0 };
+
+    if one_line {
+        // The name, then the line after it, on the row's middle.
+        let ty = (r.y + ((r.h - TITLE_H) / 2.0).floor() - lift).max(r.y);
+        let tw = ui.c.measure(a.title, &head, w).0.ceil().min(w);
+        ui.c.text(a.title, Rect::new(x, ty, tw, TITLE_H), &head);
+        let lx = x + tw + LINE_GAP;
+        ui.c.text(&line, Rect::new(lx, ty + 2.0, (x + w - lx).max(0.0), LINE_H), &foot);
+    } else {
+        // The name above, the line below, centred together.
+        let top = r.y + ((r.h - (TITLE_H + LINE_H)) / 2.0).floor() - lift;
+        ui.c.text(a.title, Rect::new(x, top, w, TITLE_H), &head);
+        ui.c.text(&line, Rect::new(x, top + TITLE_H, w, LINE_H), &foot);
+    }
+
     if let Some(p) = progress {
         let bar = Rect::new(x, r.bottom() - BAR_H - 1.0, w, BAR_H);
         ui.c.fill_rrect(bar, BAR_H / 2.0, palette::TRACK);
@@ -248,9 +261,9 @@ fn addon_row(ui: &mut Ui, st: &AppState, r: Rect, i: usize, a: &Addon, card: Opt
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::state::OyenzaLink;
     use poni_core::settings::Settings;
     use poni_core::store::Store;
-    use crate::state::OyenzaLink;
 
     #[test]
     fn every_row_offered_fits_the_page() {
@@ -271,6 +284,18 @@ mod tests {
     }
 
     #[test]
+    fn rows_stay_within_their_bounds() {
+        for n in 1..=14 {
+            let h = row_h(n);
+            assert!((ROW_MIN..=ROW_MAX).contains(&h), "n = {n}, h = {h}");
+        }
+        // Up to the seven that fit as two lines each, the page keeps its height.
+        for n in 1..=12 {
+            assert!(ROWS_Y + n as f32 * row_h(n) <= MAX_H, "n = {n}");
+        }
+    }
+
+    #[test]
     fn the_downloader_is_listed_and_switches_only_with_studio_pro() {
         use poni_core::addons::{DOWNLOADER, NOTIFICATIONS};
         let mut st = AppState::new(Settings::default(), Store::default());
@@ -281,7 +306,11 @@ mod tests {
         st.addons.insert(DOWNLOADER.id, Status::Ready);
         assert!(pro_wanted(&st), "asked at sign-in, though not listed yet");
         let listed = |st: &AppState| rows(st).iter().any(|a| a.id == DOWNLOADER.id);
-        for (link, pro) in [(OyenzaLink::Off, None), (OyenzaLink::Connected { account: "a•••@example.com".into() }, None), (OyenzaLink::Connected { account: "a•••@example.com".into() }, Some(false))] {
+        for (link, pro) in [
+            (OyenzaLink::Off, None),
+            (OyenzaLink::Connected { account: "a•••@example.com".into() }, None),
+            (OyenzaLink::Connected { account: "a•••@example.com".into() }, Some(false)),
+        ] {
             st.oyenza.link = link;
             st.oyenza.pro = pro;
             assert!(!listed(&st), "not listed without Pro ({pro:?})");
@@ -299,21 +328,5 @@ mod tests {
         st.addons.insert(NOTIFICATIONS.id, Status::Ready);
         assert_eq!(status(&st, &NOTIFICATIONS), Status::Ready);
         assert_eq!(rows(&st).iter().any(|a| a.id == NOTIFICATIONS.id), cfg!(windows));
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn rows_stay_readable_and_up_to_six_fit() {
-        for n in 1..=6 {
-            assert!(ROWS_Y + n as f32 * row_h(n) <= FIT_H, "n = {n}");
-        }
-        for n in 1..=12 {
-            let h = row_h(n);
-            assert!((ROW_MIN..=ROW_MAX).contains(&h), "n = {n}, h = {h}");
-        }
     }
 }
