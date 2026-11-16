@@ -1,4 +1,4 @@
-//! `poni --render <dir> [--theme classic|oyen|glass|pill] [--notch]`: draw the island's
+//! `poni --render <dir> [--theme classic|oyen|glass|pill|diorama] [--notch]`: draw the island's
 //! states with sample data into PNGs, offscreen, through the Mac renderer.
 //! CI runs it on a Mac with no notch and no person at the screen, so this is
 //! how the Mac drawing gets looked at: every page and activity, each theme,
@@ -11,8 +11,12 @@
 //! place (the smoke run's screenshots show the real one). Pill floats below
 //! the top edge, or around a notch rests inside it and floats below the menu
 //! bar for everything else (notch.rs). Around a
-//! notch, the last picture is the Eyes look's hide and seek with the camera
-//! as it moves, a frame a row (`render_peek`).
+//! notch, the last picture every theme has is the Eyes look's hide and seek
+//! with the camera as it moves, a frame a row (`render_peek`). Diorama is
+//! Pill with a picture in its resting pill: after those, its run draws that
+//! picture through a day (`DIORAMA_SCENES`), floating below the menu bar
+//! around a notch too, and then the island in its night look
+//! (`DIORAMA_NIGHT_SCENES`): its other pictures are by day (09:41).
 //!
 //! The music scenes use made-up data to test the drawing; the Mac app shows
 //! music once the media slice is built. The System page's scenes show a
@@ -193,6 +197,61 @@ enum Scene {
     NotesListening,
     NotesActivity,
     AddonsPro,
+    /// The Caffeine add-on at 15:42 (`seed_caffeine`): the page on a day of
+    /// three drinks, last call past, and on a day with none yet.
+    Caffeine,
+    CaffeineEmpty,
+    /// That day with Add a drink open on a 2-shot es kopi susu (`pages::caffeine::picture`).
+    CaffeineAdd,
+    /// The Diorama theme's resting pill, in that theme only: its picture
+    /// at one of a day's hours, or in another of its shapes (`Rest`).
+    /// Around a notch it floats below the menu bar.
+    Diorama(Rest),
+}
+
+/// What a picture of the Diorama theme's resting pill shows: dawn (06:10),
+/// the morning (10:08), the golden hour (17:40), night (21:30) and the
+/// small hours (02:30); then the morning written on a 12-hour clock, as the
+/// Minimal look (the place alone), under the pointer, and with its glass
+/// ball held halfway by hand, at the sunset it passes.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Rest {
+    Dawn,
+    Morning,
+    GoldenHour,
+    Night,
+    SmallHours,
+    TwelveHour,
+    Minimal,
+    Hover,
+    Slide,
+}
+
+impl Rest {
+    /// The picture's time of day: its hour and minute.
+    fn time(self) -> (u8, u8) {
+        match self {
+            Rest::Dawn => (6, 10),
+            Rest::Morning | Rest::TwelveHour | Rest::Minimal | Rest::Hover | Rest::Slide => (10, 8),
+            Rest::GoldenHour => (17, 40),
+            Rest::Night => (21, 30),
+            Rest::SmallHours => (2, 30),
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Rest::Dawn => "idle-dawn",
+            Rest::Morning => "idle-morning",
+            Rest::GoldenHour => "idle-golden-hour",
+            Rest::Night => "idle-night",
+            Rest::SmallHours => "idle-small-hours",
+            Rest::TwelveHour => "idle-12-hour",
+            Rest::Minimal => "idle-minimal",
+            Rest::Hover => "idle-clock-hover",
+            Rest::Slide => "idle-slide",
+        }
+    }
 }
 
 const SCENES: [Scene; 19] = [
@@ -230,7 +289,8 @@ const SYSTEM_SCENES: [Scene; 6] = [
 ];
 
 /// Pill's own looks, after its frames strip (number 26), so every other
-/// picture keeps its number.
+/// picture keeps its number. Diorama, Pill's island, has them too, but for
+/// the status bar: that look is Pill's alone, and its number stays free.
 const PILL_SCENES: [Scene; 2] = [Scene::IdleStatus, Scene::MediaNoLine];
 
 /// The Japanese song, after Pill's pictures (numbers 26-28, in that theme
@@ -287,6 +347,39 @@ const IELTS_SCENES: [Scene; 1] = [Scene::Ielts];
 const DOWNLOAD_SCENES: [Scene; 3] = [Scene::Downloads, Scene::DownloadActivity, Scene::AddonsDownloader];
 /// Meeting notes and every Pro add-on, after the Downloader.
 const NOTES_SCENES: [Scene; 3] = [Scene::NotesListening, Scene::NotesActivity, Scene::AddonsPro];
+/// The Diorama theme's island at night (21:30), in that theme only, after
+/// its resting pill's pictures: the open card on the Music and Settings
+/// pages, the music pill and a notice, in the night look (every other
+/// picture is by day, in the day look).
+const DIORAMA_NIGHT_SCENES: [Scene; 4] = [Scene::Page(PageKind::Media), Scene::Page(PageKind::Settings), Scene::Media, Scene::FocusNotice];
+/// The night's hour and minute.
+const DIORAMA_NIGHT: (u8, u8) = (21, 30);
+
+/// The Caffeine page, after Meeting notes (so every other picture keeps its number).
+const CAFFEINE_SCENES: [Scene; 3] = [Scene::Caffeine, Scene::CaffeineEmpty, Scene::CaffeineAdd];
+/// The Diorama theme's resting pill, in that theme only, after the peek
+/// strip's number (which a run without a notch leaves free), so every other
+/// picture keeps its number.
+const DIORAMA_SCENES: [Scene; 9] = [
+    Scene::Diorama(Rest::Dawn),
+    Scene::Diorama(Rest::Morning),
+    Scene::Diorama(Rest::GoldenHour),
+    Scene::Diorama(Rest::Night),
+    Scene::Diorama(Rest::SmallHours),
+    Scene::Diorama(Rest::TwelveHour),
+    Scene::Diorama(Rest::Minimal),
+    Scene::Diorama(Rest::Hover),
+    Scene::Diorama(Rest::Slide),
+];
+
+/// What every theme draws after Pill's pictures, in its order: the Japanese
+/// song, the Add-ons tab, Prayer times, Settings, the headphone pop-up,
+/// Oyenza, Power, Today signed in, Prayer times abroad, Stocks, the Update
+/// sheet, Record, the AI tab, IELTS, the Downloader, Meeting notes and Caffeine.
+fn later_scenes() -> impl Iterator<Item = Scene> {
+    let later = SETTINGS_SCENES.into_iter().chain(HEADPHONE_SCENES).chain(OYENZA_SCENES).chain(POWER_SCENES).chain(TODAY_SCENES).chain(PRAYER_WORLD_SCENES).chain(STOCKS_SCENES).chain(UPDATE_SCENES).chain(RECORD_SCENES).chain(ai_scenes()).chain(IELTS_SCENES).chain(DOWNLOAD_SCENES).chain(NOTES_SCENES).chain(CAFFEINE_SCENES);
+    JA_SCENES.into_iter().chain(ADDON_SCENES).chain(PRAYER_SCENES).chain(later)
+}
 
 impl Scene {
     fn name(self) -> String {
@@ -349,6 +442,10 @@ impl Scene {
             Scene::NotesListening => "page-notes-listening".into(),
             Scene::NotesActivity => "notes-activity".into(),
             Scene::AddonsPro => "page-addons-pro".into(),
+            Scene::Caffeine => "page-caffeine".into(),
+            Scene::CaffeineEmpty => "page-caffeine-empty".into(),
+            Scene::CaffeineAdd => "page-caffeine-add".into(),
+            Scene::Diorama(r) => r.name().into(),
         }
     }
 }
@@ -363,6 +460,7 @@ pub fn run(dir: &str, args: &[String]) -> i32 {
         Some("oyen") => Theme::Oyen,
         Some("glass") => Theme::Glass,
         Some("pill") => Theme::Pill,
+        Some("diorama") => Theme::Diorama,
         _ => Theme::Classic,
     };
     let notch = args.iter().any(|a| a == "--notch").then_some(Notch::MACBOOK);
@@ -371,6 +469,7 @@ pub fn run(dir: &str, args: &[String]) -> i32 {
         Theme::Oyen => "-oyen",
         Theme::Glass => "-glass",
         Theme::Pill => "-pill",
+        Theme::Diorama => "-diorama",
     };
     let suffix = format!("{name}{}", if notch.is_some() { "-notch" } else { "" });
     // A home of its own, so add-ons on this Mac don't change the pictures.
@@ -382,7 +481,7 @@ pub fn run(dir: &str, args: &[String]) -> i32 {
     let mut gfx = Gfx::new(SCALE);
     for (i, scene) in SCENES.into_iter().chain(SYSTEM_SCENES).enumerate() {
         let path = out.join(format!("{:02}-{}{suffix}.png", i + 1, scene.name()));
-        match render_scene(&mut gfx, scene, theme, notch, ja.as_ref(), &path) {
+        match render_scene(&mut gfx, scene, theme, notch, ja.as_ref(), None, &path) {
             Ok(()) => println!("render: {}", path.display()),
             Err(e) => {
                 eprintln!("render: {}: {e}", path.display());
@@ -402,8 +501,12 @@ pub fn run(dir: &str, args: &[String]) -> i32 {
             }
         }
         for (k, scene) in PILL_SCENES.into_iter().enumerate() {
+            // The status bar is a look only the Pill theme offers.
+            if scene == Scene::IdleStatus && !crate::pill::status::looks(theme).contains(&IdleStyle::Status) {
+                continue;
+            }
             let path = out.join(format!("{:02}-{}{suffix}.png", n + 1 + k, scene.name()));
-            match render_scene(&mut gfx, scene, theme, notch, ja.as_ref(), &path) {
+            match render_scene(&mut gfx, scene, theme, notch, ja.as_ref(), None, &path) {
                 Ok(()) => println!("render: {}", path.display()),
                 Err(e) => {
                     eprintln!("render: {}: {e}", path.display());
@@ -412,13 +515,12 @@ pub fn run(dir: &str, args: &[String]) -> i32 {
             }
         }
     }
-    // The Japanese song, the Add-ons tab, Prayer times, Settings, the headphone pop-up, Oyenza, Power, Today signed in, Prayer times abroad, Stocks, the Update sheet, Record, the AI tab, IELTS and the Downloader in every theme, after Pill's.
+    // The Japanese song to Caffeine (`later_scenes`) in every theme, after Pill's.
     let first = SCENES.len() + SYSTEM_SCENES.len() + 2 + PILL_SCENES.len();
     let mut next = first;
-    let later = SETTINGS_SCENES.into_iter().chain(HEADPHONE_SCENES).chain(OYENZA_SCENES).chain(POWER_SCENES).chain(TODAY_SCENES).chain(PRAYER_WORLD_SCENES).chain(STOCKS_SCENES).chain(UPDATE_SCENES).chain(RECORD_SCENES).chain(ai_scenes()).chain(IELTS_SCENES).chain(DOWNLOAD_SCENES).chain(NOTES_SCENES);
-    for (k, scene) in JA_SCENES.into_iter().chain(ADDON_SCENES).chain(PRAYER_SCENES).chain(later).enumerate() {
+    for (k, scene) in later_scenes().enumerate() {
         let path = out.join(format!("{:02}-{}{suffix}.png", first + k, scene.name()));
-        match render_scene(&mut gfx, scene, theme, notch, ja.as_ref(), &path) {
+        match render_scene(&mut gfx, scene, theme, notch, ja.as_ref(), None, &path) {
             Ok(()) => println!("render: {}", path.display()),
             Err(e) => {
                 eprintln!("render: {}: {e}", path.display());
@@ -442,7 +544,7 @@ pub fn run(dir: &str, args: &[String]) -> i32 {
         }
     }
     let next = next + settings_shots().len();
-    // Around a notch, last: the Eyes look's hide and seek with the camera.
+    // Around a notch, last of every theme's: the Eyes look's hide and seek with the camera.
     if let Some(n) = notch {
         let path = out.join(format!("{next:02}-peek-frames{suffix}.png"));
         match render_peek(&mut gfx, theme, n, &path) {
@@ -450,6 +552,22 @@ pub fn run(dir: &str, args: &[String]) -> i32 {
             Err(e) => {
                 eprintln!("render: {}: {e}", path.display());
                 failed += 1;
+            }
+        }
+    }
+    // Diorama's resting pill through a day, after the peek strip's number,
+    // then the island at night.
+    if theme == Theme::Diorama {
+        let night = DIORAMA_NIGHT_SCENES.into_iter().map(|s| (s, Some(DIORAMA_NIGHT)));
+        for (k, (scene, at)) in DIORAMA_SCENES.into_iter().map(|s| (s, None)).chain(night).enumerate() {
+            let when = if at.is_some() { "-night" } else { "" };
+            let path = out.join(format!("{:02}-{}{when}{suffix}.png", next + 1 + k, scene.name()));
+            match render_scene(&mut gfx, scene, theme, notch, ja.as_ref(), at, &path) {
+                Ok(()) => println!("render: {}", path.display()),
+                Err(e) => {
+                    eprintln!("render: {}: {e}", path.display());
+                    failed += 1;
+                }
             }
         }
     }
@@ -466,7 +584,7 @@ pub fn run(dir: &str, args: &[String]) -> i32 {
 /// top (the website's full-screen chapter). Each is (section, light, Stay on top).
 fn settings_shots() -> Vec<(crate::settings_window::Section, bool, bool)> {
     use crate::settings_window::Section;
-    let mut v: Vec<_> = Section::ALL.into_iter().filter(|s| *s != Section::Prayer).map(|s| (s, false, false)).collect();
+    let mut v: Vec<_> = Section::ALL.into_iter().filter(|s| !matches!(s, Section::Prayer | Section::Caffeine)).map(|s| (s, false, false)).collect();
     v.extend([(Section::General, true, false), (Section::Appearance, true, false), (Section::Island, false, true)]);
     v
 }
@@ -510,6 +628,8 @@ fn render_morph(gfx: &mut Gfx, theme: Theme, notch: Option<Notch>, path: &Path) 
     const DT: f32 = 1.0 / 60.0;
     /// The strip is drawn at one pixel per DIP (it is long).
     const STRIP_SCALE: f32 = 1.0;
+    // Diorama's resting pill, where the island closes to: its ball at rest.
+    crate::pill::diorama::settle();
     let mut st = base_state(theme);
     st.page = PageKind::Today;
     let (rest, open) = (Mode::Idle, Mode::Expanded(PageKind::Today));
@@ -524,7 +644,7 @@ fn render_morph(gfx: &mut Gfx, theme: Theme, notch: Option<Notch>, path: &Path) 
     let cell_h = (notch.map_or(0.0, |n| n.h) + crate::pill::TOP_GAP + ends[1].1.h * 1.06 + 28.0).ceil();
     let (w_px, h_px) = ((2.0 * cell_w * STRIP_SCALE).ceil() as usize, (FRAMES.len() as f32 * cell_h * STRIP_SCALE).ceil() as usize);
     let bmp = Bitmap::new(w_px, h_px, STRIP_SCALE).ok_or("no bitmap context")?;
-    let look = if notch.is_some() { poni_core::look::around_notch(theme) } else { poni_core::look::of(theme) };
+    let look = crate::pill::look(&st, notch.is_some());
     for (col, (from, to)) in [(0usize, 1usize), (1, 0)].into_iter().enumerate() {
         let (_, g_from, gap_from) = ends[from];
         let (to_mode, g_to, gap_to) = ends[to];
@@ -741,7 +861,7 @@ fn seed_prayer(st: &mut AppState, picking: bool) -> Result<(poni_core::prayer::S
     // The website's "ed" file, as if it had come.
     let ed = World::parse(poni_core::prayer::world::SAMPLE.into())?;
     st.prayer.cities = [("ed".to_string(), CityFile::Here(std::sync::Arc::new(ed)))].into();
-    let site = st.prayer.site().ok_or("no site for Kota Jakarta")?;
+    let site = st.prayer_site().ok_or("no site for Kota Jakarta")?;
     let ashar = poni_core::prayer::day_times(&site, site.local_day(st.unix)).ok_or("no times today")?.ashar;
     st.prayer.clock_shift = ashar - 8 * 60 - st.unix;
     st.prayer.handled_until = Some(st.prayer_now());
@@ -762,7 +882,7 @@ fn seed_prayer_world(st: &mut AppState, picking: bool) -> Result<(), String> {
     };
     st.settings.prayer.world_place = st.prayer.place.as_ref().and_then(|p| p.world_lines.clone());
     st.settings.prayer.follow_location = false;
-    let site = st.prayer.site().ok_or("no site for Edinburgh")?;
+    let site = st.prayer_site().ok_or("no site for Edinburgh")?;
     let ashar = poni_core::prayer::day_times(&site, site.local_day(st.unix)).ok_or("no times in Edinburgh today")?.ashar;
     st.prayer.clock_shift = ashar - 8 * 60 - st.unix;
     st.prayer.handled_until = Some(st.prayer_now());
@@ -818,13 +938,42 @@ fn health_on(st: &mut AppState) {
     st.addons.insert(poni_core::addons::HEALTH.id, AddonStatus::Ready);
 }
 
+/// The Caffeine add-on switched on, its clock at 15:42 on the pictures' day,
+/// bedtime 23:00 and its other choices as they come. `drinks`: 07:30 a Kopi
+/// sachet, 10:15 an Es kopi susu (2 shots, Blend) and 12:00 an Americano (2
+/// shots, Arabica), 400 mg in all; the usual drink is then that Americano,
+/// so last call (about 12:07) is past. Only the add-on's own data
+/// (`store.caffeine`, `settings.caffeine`), so the page draws them however
+/// it lays them out.
+fn seed_caffeine(st: &mut AppState, drinks: bool) {
+    use poni_core::caffeine::{local_minute, Bean, Drink, Kind, Log, Prefs};
+    st.settings.set_addon(poni_core::addons::CAFFEINE.id, true);
+    st.addons.insert(poni_core::addons::CAFFEINE.id, AddonStatus::Ready);
+    set_clock(st, 15, 42);
+    st.settings.caffeine = Prefs { bedtime: 23 * 60, ..Prefs::default() };
+    st.store.caffeine = Log::default();
+    if !drinks {
+        return;
+    }
+    let midnight = local_minute(&st.local) - st.local.minute_of_day() as i64;
+    let day = [(7, 30, Kind::Sachet, 1, None), (10, 15, Kind::KopiSusu, 2, Some(Bean::Blend)), (12, 0, Kind::Americano, 2, Some(Bean::Arabica))];
+    for (hour, minute, kind, amount, bean) in day {
+        let mg = kind.mg(amount, bean.unwrap_or_default());
+        st.store.caffeine.add(Drink { id: 0, at: midnight + hour * 60 + minute, kind, amount, bean, mg, name: String::new() });
+    }
+}
+
 fn base_state(theme: Theme) -> AppState {
     let settings = Settings { theme, sounds: false, show_media_activity: true, lyrics: true, ..Default::default() };
     let mut st = AppState::new(settings, Store::default());
     st.now = NOW_MONO;
     st.unix = NOW_UNIX;
     st.local = LocalDateTime { year: 2026, month: 10, day: 24, hour: 9, minute: 41, second: 0 };
-    st.accent = if theme == Theme::Oyen { crate::oyen::ORANGE } else { palette::BLUE };
+    st.accent = match theme {
+        Theme::Oyen => crate::oyen::ORANGE,
+        Theme::Diorama => poni_core::look::DIORAMA_ACCENT,
+        _ => palette::BLUE,
+    };
     st.volume = VolumeState { level: 0.64, muted: false, known: true };
     st.power = PowerState { has_battery: true, percent: 76, charging: false, on_ac: false, saver: false };
     st.stats = SysStats { valid: true, cpu: 0.23, mem_used: 9 << 30, mem_total: 16 << 30, disk_free: 212 << 30, disk_total: 476 << 30, uptime_s: 3 * 86_400 + 4 * 3600 };
@@ -832,6 +981,14 @@ fn base_state(theme: Theme) -> AppState {
     st.ui.oyen_tab = Some((crate::oyen::TabMove::Arrive, f64::NEG_INFINITY));
     seed(&mut st);
     st
+}
+
+/// The picture's clock at `hour`:`minute` of its day, instead of 09:41.
+fn set_clock(st: &mut AppState, hour: u8, minute: u8) {
+    let was = st.local.hour as i64 * 3600 + st.local.minute as i64 * 60;
+    st.local.hour = hour;
+    st.local.minute = minute;
+    st.unix += hour as i64 * 3600 + minute as i64 * 60 - was;
 }
 
 /// A later version than this build, with its DMG, for the Update sheet.
@@ -1004,8 +1161,16 @@ fn ja_status(st: &mut AppState, status: AddonStatus) -> AddonStatus {
     status
 }
 
-fn render_scene(gfx: &mut Gfx, scene: Scene, theme: Theme, notch: Option<Notch>, ja: Option<&[Pronounced; 2]>, path: &Path) -> Result<(), String> {
+/// One picture of `scene`, on the clock's `at` (hour, minute) of its day
+/// instead of 09:41 where given.
+fn render_scene(gfx: &mut Gfx, scene: Scene, theme: Theme, notch: Option<Notch>, ja: Option<&[Pronounced; 2]>, at: Option<(u8, u8)>, path: &Path) -> Result<(), String> {
+    // Diorama's glass ball rests where this picture's time has it, whatever
+    // the picture before it showed.
+    crate::pill::diorama::settle();
     let mut st = base_state(theme);
+    if let Some((hour, minute)) = at {
+        set_clock(&mut st, hour, minute);
+    }
     let mut hovering = false;
     let mode = match scene {
         Scene::IdleClock => Mode::Idle,
@@ -1207,6 +1372,17 @@ fn render_scene(gfx: &mut Gfx, scene: Scene, theme: Theme, notch: Option<Notch>,
             st.page = PageKind::Stocks;
             Mode::Expanded(PageKind::Stocks)
         }
+        Scene::Caffeine | Scene::CaffeineEmpty => {
+            seed_caffeine(&mut st, scene == Scene::Caffeine);
+            st.page = PageKind::Caffeine;
+            Mode::Expanded(PageKind::Caffeine)
+        }
+        Scene::CaffeineAdd => {
+            seed_caffeine(&mut st, false);
+            crate::pages::caffeine::picture(&mut st, crate::pages::caffeine::Picture::Add);
+            st.page = PageKind::Caffeine;
+            Mode::Expanded(PageKind::Caffeine)
+        }
         Scene::Record | Scene::RecordLive | Scene::RecordActivity | Scene::RecordPaused | Scene::AddonsRecorder => {
             use poni_core::recorder::Phase as RecPhase;
             st.recorder = true;
@@ -1232,6 +1408,9 @@ fn render_scene(gfx: &mut Gfx, scene: Scene, theme: Theme, notch: Option<Notch>,
             }
         }
         Scene::Ai(shows) => {
+            // AI usage is part of Studio Pro: signed in with it.
+            st.oyenza = fake_oyenza(&st, false);
+            st.oyenza.pro = Some(true);
             let now = st.now;
             crate::pages::usage::picture(&mut st, shows, now);
             st.page = PageKind::Ai;
@@ -1330,6 +1509,23 @@ fn render_scene(gfx: &mut Gfx, scene: Scene, theme: Theme, notch: Option<Notch>,
             st.set_notice_inline(InlineAction::StopAdzan);
             Mode::Notice
         }
+        Scene::Diorama(shows) => {
+            let (hour, minute) = shows.time();
+            set_clock(&mut st, hour, minute);
+            match shows {
+                Rest::Dawn | Rest::Morning | Rest::GoldenHour | Rest::Night | Rest::SmallHours => {}
+                Rest::TwelveHour => st.settings.use_24h = false,
+                Rest::Minimal => st.settings.idle_style = IdleStyle::Minimal,
+                Rest::Hover => hovering = true,
+                // In hand from the house end and carried halfway across.
+                Rest::Slide => {
+                    let travel = crate::pill::diorama::geom(&st).map_or(0.0, |g| g.w - g.h);
+                    crate::pill::diorama::grab(&st, 0.0);
+                    crate::pill::diorama::slide(travel / 2.0, st.now);
+                }
+            }
+            Mode::Idle
+        }
     };
 
     // The island at rest at its size for this state (as the app sizes it).
@@ -1385,8 +1581,8 @@ fn render_scene(gfx: &mut Gfx, scene: Scene, theme: Theme, notch: Option<Notch>,
     }
 
     // The island, drawn by the app's own content code (around a notch in
-    // the look that meets its black).
-    let look = if notch.is_some() { poni_core::look::around_notch(theme) } else { poni_core::look::of(theme) };
+    // the look that meets its black; Diorama's by day or at night).
+    let look = crate::pill::look(&st, notch.is_some());
     gfx.set_look(look);
     {
         let mut c = gfx.canvas(bmp.ctx());
@@ -1433,8 +1629,7 @@ fn warm_up(gfx: &mut Gfx, st: &mut AppState, mode: Mode, notch: Option<Notch>, g
     let h = island.top() + g.h + MARGIN_BOTTOM;
     let bmp = Bitmap::new((w * SCALE).ceil() as usize, (h * SCALE).ceil() as usize, SCALE).ok_or("no bitmap context")?;
     let body = island.body_rect_at(w / 2.0);
-    let theme = st.settings.theme;
-    gfx.set_look(if notch.is_some() { poni_core::look::around_notch(theme) } else { poni_core::look::of(theme) });
+    gfx.set_look(crate::pill::look(st, notch.is_some()));
     let mut c = gfx.canvas(bmp.ctx());
     let mut input = Input::default();
     if hovering {
@@ -1661,4 +1856,44 @@ fn art_sample(u: f32, v: f32) -> [f32; 3] {
         c = if u > 0.34 { mix(paper, rgb(0xD9D2C4), 0.55) } else { paper };
     }
     c
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use poni_core::caffeine::{hhmm, local_minute, Today};
+
+    #[test]
+    fn every_picture_has_a_name_of_its_own() {
+        // A theme's run: the first scenes, Pill's own, every theme's later
+        // ones and Diorama's day (the frame strips name themselves).
+        let mut names = std::collections::BTreeSet::new();
+        for scene in SCENES.into_iter().chain(SYSTEM_SCENES).chain(PILL_SCENES).chain(later_scenes()).chain(DIORAMA_SCENES) {
+            let name = scene.name();
+            assert!(names.insert(name.clone()), "two pictures named {name}");
+        }
+        assert!(names.contains("page-caffeine") && names.contains("page-caffeine-empty"));
+    }
+
+    #[test]
+    fn the_caffeine_pictures_show_their_day_at_15_42() {
+        let mut st = base_state(Theme::Classic);
+        seed_caffeine(&mut st, true);
+        let now = local_minute(&st.local);
+        assert_eq!((st.local.day_key(), hhmm(now)), ("2026-10-24".to_string(), "15:42".to_string()));
+        assert!(pages::tabs(&st).contains(&PageKind::Caffeine));
+        let drinks: Vec<String> = st.store.caffeine.drinks.iter().map(|d| format!("{} {} ({}) {:.0} mg", hhmm(d.at), d.title(), d.detail(), d.mg)).collect();
+        assert_eq!(drinks, ["07:30 Kopi sachet (1 sachet) 40 mg", "10:15 Es kopi susu (2 shots \u{b7} Blend) 210 mg", "12:00 Americano (2 shots \u{b7} Arabica) 150 mg"]);
+        let today = Today::of(&st.store.caffeine, &st.settings.caffeine, now);
+        assert_eq!((today.count, today.total_mg, hhmm(today.bed)), (3, 400.0, "23:00".to_string()));
+        // Last call is worked out for the usual drink, the Americano, and is past.
+        assert_eq!(today.usual.phrase, "a 2-shot Americano");
+        assert!(today.last_call.is_some_and(|call| call > today.start && call < now), "{:?}", today.last_call.map(hhmm));
+        // The empty day: no drinks, the same clock, the tab still there.
+        let mut st = base_state(Theme::Classic);
+        seed_caffeine(&mut st, false);
+        assert!(st.store.caffeine.drinks.is_empty());
+        assert_eq!(hhmm(local_minute(&st.local)), "15:42");
+        assert!(pages::tabs(&st).contains(&PageKind::Caffeine));
+    }
 }

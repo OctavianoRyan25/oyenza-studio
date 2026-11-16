@@ -50,6 +50,7 @@ use poni_core::look::{Look, Material};
 use poni_core::oyenza;
 use poni_core::prayer::{Due, PlaceList, Prayer, PrayerMoment};
 use poni_core::settings::{IdleStyle, PrayerSound, Settings, Theme};
+use poni_core::spot;
 use poni_core::sysmon::{CoreKind, Module};
 use poni_core::store::{load_json, parse_json, save_json_atomic, LoadOutcome, Store};
 use std::cell::RefCell;
@@ -415,10 +416,21 @@ pub struct App {
     text_focus: bool,
     cursor: CursorKind,
     screen: ScreenInfo,
-    /// The window: a fixed-size surface (DIPs) the island is drawn centred in.
+    /// The island's room (DIPs): the window's size, unless the island was
+    /// dragged along the top edge around a notch (`place_window`).
     surface: (f32, f32),
-    /// Centre of the surface (where the island hangs from).
+    /// The window's left edge (DIPs from the screen's left edge) and width.
+    win: (f32, f32),
+    /// The island's centre in the window this frame (where it hangs from):
+    /// the notch (or the middle), or the spot it was dragged to.
     cx: f32,
+    /// The notch's centre in the window (the middle of the screen without one).
+    notch_cx: f32,
+    /// The spot along the top edge (`Settings::island_x`, in DIPs from the
+    /// screen's left edge) the window was last placed for.
+    laid_spot: Option<f32>,
+    /// A press on the closed island, which a sideways move turns into a drag.
+    grab: Option<Grab>,
     #[allow(dead_code)]
     sink: EventSink,
     rx: Receiver<AppEvent>,
@@ -531,6 +543,8 @@ pub struct App {
     updater: Option<crate::updates::Updater>,
     /// Prayer times' adzan, while it plays.
     adzan: services::adzan::AdzanPlayer,
+    /// Caffeine's reminder before last call: its minute and the day it showed.
+    last_call: crate::last_call::Reminder,
     motion: Option<MotionStats>,
     motion_name: &'static str,
     motions_logged: u32,
@@ -561,12 +575,26 @@ pub struct App {
     /// what stopping it gave.
     smoke_notes: Option<Result<(services::notes::Recording, bool, bool), poni_core::notes::CaptureIssue>>,
     smoke_notes_stop: Option<(bool, String)>,
+    /// The Caffeine steps: the drinks in the log before the one they add.
+    smoke_drinks: Option<usize>,
     /// The island floated on the last frame (Pill letting go of the notch).
     was_floating: bool,
     /// The port Oyenza Studio Recorder writes to (`services::recorder`).
     rec_port: Option<services::recorder::Port>,
     /// When the island next asks whether the recorder still runs (mono seconds).
     rec_alive_at: f64,
+}
+
+/// A press on the closed island: let go where it was, it opens the island;
+/// moved sideways first, it drags the island along the top edge.
+#[derive(Clone, Copy, Debug)]
+struct Grab {
+    /// Where the pointer was pressed, DIPs from the screen's left edge.
+    from: f32,
+    /// The island's centre then, DIPs from the screen's left edge.
+    centre: f32,
+    /// The pointer went past `spot::DRAG_SLOP`: a drag, not a click.
+    moved: bool,
 }
 
 impl App {
@@ -613,7 +641,11 @@ impl App {
             cursor: CursorKind::Arrow,
             screen,
             surface: (0.0, 0.0),
+            win: (0.0, 0.0),
             cx: 0.0,
+            notch_cx: 0.0,
+            laid_spot: None,
+            grab: None,
             sink,
             rx,
             menubar: None,
@@ -672,6 +704,7 @@ impl App {
             usage_watch: services::usage::Watch::default(),
             updater: None,
             adzan: Default::default(),
+            last_call: Default::default(),
             motion: None,
             motion_name: "morph",
             motions_logged: 0,
@@ -689,6 +722,7 @@ impl App {
             smoke_mic_stop: None,
             smoke_notes: None,
             smoke_notes_stop: None,
+            smoke_drinks: None,
             was_floating: false,
             rec_port: None,
             rec_alive_at: 0.0,
@@ -705,7 +739,7 @@ impl App {
             self.updater = Some(crate::updates::Updater::start(paths::data_dir().join("update.json"), &mut self.st, crate::updates::unix_now()));
         }
         let line = crate::updates::menu_line(&self.st, self.updater.is_some());
-        self.menubar = Some(MenuBar::add(self.mtm, &self.st.settings, self.st.pinned, services::login::status(), &self.st.oyenza.link, line));
+        self.menubar = Some(MenuBar::add(self.mtm, &self.menu_settings(), self.st.pinned, services::login::status(), &self.st.oyenza.link, line));
         self.st.power = services::power::query();
         services::power::watch(self.sink.clone());
         services::audio::start(self.sink.clone());
@@ -861,6 +895,9 @@ impl App {
                 } else if self.input.mouse.and_then(|p| self.hit_at(p)).is_some_and(|h| h.id == wid(activities::PRAYER_OK_ID)) {
                     // So does the prayer countdown under a pointer resting on
                     // its OK (resting on the rest of it still opens).
+                } else if self.input.mouse.and_then(|p| self.hit_at(p)).is_some_and(|h| h.id == wid(pill::diorama::BALL_ID)) {
+                    // And Diorama's resting pill under a pointer resting on its
+                    // glass ball, which is there to be slid.
                 } else {
                     self.expand();
                 }
@@ -930,6 +967,11 @@ impl App {
         if let Some(t) = activities::next_wake(&self.mode, &self.st) {
             consider(t);
         }
+        // Caffeine's reminder comes on its minute, the island asleep or not
+        // (one wake a day at most).
+        if let Some(t) = self.last_call.wake(&self.st) {
+            consider(t);
+        }
         if let Mode::Expanded(p) = self.mode {
             // A page's own changes rest while nobody can see the screen (the
             // Prayer page's countdown ticks every second).
@@ -978,6 +1020,10 @@ impl App {
         }
         if before.theme != self.st.settings.theme {
             self.st.accent = theme_accent(self.st.settings.theme);
+            // The menu ticks the theme and lists its idle looks (the status
+            // bar is Pill's alone, not Diorama's). Around a notch only Pill's
+            // island moves along the top edge (Move island to the centre).
+            self.refresh_menu();
         }
         // The Pill theme's window keeps room for the gap above the island.
         if pill::on(before.theme) != pill::on(self.st.settings.theme) {
@@ -1245,6 +1291,7 @@ impl App {
                     self.maybe_schedule_collapse();
                 }
             }
+            MenuCmd::CentreIsland => s.island_x = None,
             MenuCmd::SetTheme(t) => s.theme = t,
             MenuCmd::SetIdleStyle(style) => s.idle_style = style,
             MenuCmd::ToggleSounds => s.sounds = !s.sounds,
@@ -1306,9 +1353,20 @@ impl App {
     fn refresh_menu(&mut self) {
         let login = services::login::status();
         let line = crate::updates::menu_line(&self.st, self.updater.is_some());
+        let s = self.menu_settings();
         if let Some(m) = self.menubar.as_mut() {
-            m.refresh(self.mtm, &self.st.settings, self.st.pinned, login, &self.st.oyenza.link, line);
+            m.refresh(self.mtm, &s, self.st.pinned, login, &self.st.oyenza.link, line);
         }
+    }
+
+    /// The settings as the menu shows them: a spot along the top edge only
+    /// where the island moves (Move island to the centre).
+    fn menu_settings(&self) -> Settings {
+        let mut s = self.st.settings.clone();
+        if !self.movable() {
+            s.island_x = None;
+        }
+        s
     }
 
     /// Start at login on or off. macOS may ask the person to allow it in
@@ -1940,7 +1998,7 @@ impl App {
         if self.st.settings.prayer.follow_location && self.st.prayer.located_at.is_none_or(|t| self.st.unix - t >= 3 * 3600) {
             self.locate();
         }
-        let Some(site) = self.st.prayer.site() else { return };
+        let Some(site) = self.st.prayer_site() else { return };
         let now = self.st.prayer_now();
         let Some(from) = self.st.prayer.handled_until else {
             self.st.prayer.handled_until = Some(now);
@@ -1962,7 +2020,7 @@ impl App {
     /// A prayer's time came: the island says so and plays the chosen sound.
     /// Quiet when it's late (after a sleep) or a full-screen app hides the island.
     fn prayer_moment(&mut self, m: PrayerMoment, ring: bool) {
-        let Some(site) = self.st.prayer.site() else { return };
+        let Some(site) = self.st.prayer_site() else { return };
         let place = self.st.prayer.place.as_ref().map_or(String::new(), |p| p.label.clone());
         let ring = ring && !self.fullscreen_hidden;
         let sound = if ring { self.st.settings.prayer.sound } else { PrayerSound::Silent };
@@ -2014,7 +2072,7 @@ impl App {
     /// countdown.
     fn prayer_countdown_ok(&mut self) {
         self.refresh_time();
-        if let (Some(m), Some(site)) = (self.st.prayer_countdown_ok(), self.st.prayer.site()) {
+        if let (Some(m), Some(site)) = (self.st.prayer_countdown_ok(), self.st.prayer_site()) {
             pinfo!("prayer: countdown put away until {} at {}", m.prayer.name(), site.hhmm(m.at));
         }
     }
@@ -2065,6 +2123,11 @@ impl App {
             self.screen = s;
             self.gfx.set_scale(s.scale);
             self.layout_surface();
+            // The same room on another screen still moves there, and a spot
+            // along the top edge is a share of this screen's width.
+            self.place_window();
+            // Whether the island can move here (Move island to the centre).
+            self.refresh_menu();
             // Whether a full-screen app is in front is a question per screen.
             services::fullscreen::check();
         }
@@ -2075,7 +2138,8 @@ impl App {
 
     /// Size and place the window once for the largest island (the widest,
     /// tallest expanded page plus spring overshoot). The island is drawn
-    /// centred in it, so a morph never moves or resizes the window.
+    /// centred in it, or at the spot it was dragged to, so a morph never
+    /// moves or resizes the window.
     fn layout_surface(&mut self) {
         let tallest = PageKind::ALL.iter().map(|p| pages::content_height(*p, &self.st)).fold(0.0f32, f32::max);
         self.layout_surface_for(self.st.settings.expanded_width, pages::HEADER_H + tallest + pages::PAD);
@@ -2090,9 +2154,81 @@ impl App {
         let h = ((body_h + self.strip()) * OVERSHOOT + top + bottom).ceil();
         if (w, h) != self.surface {
             self.surface = (w, h);
-            self.cx = w / 2.0;
-            self.prev_canvas = None;
-            window::place(&self.screen, w as f64, h as f64);
+            self.place_window();
+        }
+    }
+
+    /// Whether the island can be dragged along the top edge here: on a
+    /// screen without a notch in every theme, and around a notch in Pill,
+    /// whose island floats below the menu bar. The other themes' island
+    /// belongs at the camera.
+    fn movable(&self) -> bool {
+        self.screen.notch.is_none() || pill::on(self.st.settings.theme)
+    }
+
+    /// The spot along the top edge the island was dragged to, DIPs from the
+    /// screen's left edge: None in the middle (at the notch), and where it
+    /// can't move.
+    fn spot(&self) -> Option<f32> {
+        self.st.settings.island_x.filter(|_| self.movable()).map(|f| f * self.screen.w as f32)
+    }
+
+    /// Put the window at the top of the screen: centred on the notch (or the
+    /// middle), or around the spot the island was dragged to, as far as the
+    /// screen allows. Around a notch it keeps the notch in it too: Pill
+    /// docks there to rest, and slides between the two. While the island is
+    /// dragged the window spans the screen, so a drag never moves it.
+    fn place_window(&mut self) {
+        let (w, h) = self.surface;
+        let (sw, home) = (self.screen.w as f32, self.screen.cx as f32);
+        self.laid_spot = self.spot();
+        let at_home = ((home - w / 2.0).round(), w);
+        let (left, width) = match self.laid_spot {
+            _ if self.grab.is_some_and(|g| g.moved) => (0.0, sw),
+            None => at_home,
+            Some(at) => {
+                let l = spot::window_left(0, sw as i32, w as i32, at.round() as i32) as f32;
+                match self.screen.notch {
+                    Some(_) => {
+                        let (l, r) = (l.min(at_home.0), (l + w).max(at_home.0 + w));
+                        (l, r - l)
+                    }
+                    None => (l, w),
+                }
+            }
+        };
+        self.win = (left, width);
+        self.notch_cx = home - left;
+        self.prev_canvas = None;
+        window::place(&self.screen, left as f64, width as f64, h as f64);
+        self.place_island();
+    }
+
+    /// The island's centre in the window this frame: at the notch (or the
+    /// middle), or at the spot it was dragged to, moved in just enough to
+    /// keep its outline (as wide as it is now) in the window: opening near
+    /// the screen's edge, it grows away from the edge. Pill around a notch
+    /// docks at the notch to rest and slides to the spot as it floats;
+    /// Diorama's picture rests floating, so it stays at the spot.
+    fn place_island(&mut self) {
+        let Some(at) = self.laid_spot else {
+            self.cx = self.notch_cx;
+            return;
+        };
+        let at = at - self.win.0;
+        let want = match self.screen.notch {
+            Some(n) => self.notch_cx + (at - self.notch_cx) * notch::detach(self.island.top(), Some(n)),
+            None => at,
+        };
+        self.cx = spot::fit_centre(want, self.win.1, self.island.current().w, self.room().0);
+    }
+
+    /// The spot along the top edge changed since the window was placed (a
+    /// drag, Move island to the centre, Reload settings, another theme):
+    /// place it there. Called every frame; a move only on that change.
+    fn sync_spot(&mut self) {
+        if self.spot() != self.laid_spot {
+            self.place_window();
         }
     }
 
@@ -2157,12 +2293,10 @@ impl App {
     }
 
     /// How the island paints: the theme's look, or around a notch the one
-    /// that meets its black (Oyen goes black there).
+    /// that meets its black (Oyen goes black there); Diorama's by day or at
+    /// night, as its picture shows (it floats below a notch).
     fn look(&self) -> &'static Look {
-        match self.screen.notch {
-            Some(_) => poni_core::look::around_notch(self.st.settings.theme),
-            None => poni_core::look::of(self.st.settings.theme),
-        }
+        pill::look(&self.st, self.screen.notch.is_some())
     }
 
     /// The resting island is out of sight: hidden until hover, or inside the notch.
@@ -2212,7 +2346,7 @@ impl App {
         // already hovers, the resting island's ears too.
         if let Some(n) = self.screen.notch.filter(|_| self.island.floating()) {
             if p.y < n.h {
-                return (p.x - self.cx).abs() <= self.menu_line_w(n) / 2.0;
+                return (p.x - self.notch_cx).abs() <= self.menu_line_w(n) / 2.0;
             }
         }
         if !self.expanded {
@@ -2242,6 +2376,17 @@ impl App {
     // ------------------------------------------------------------ input
 
     fn on_pointer(&mut self, p: Point) {
+        if self.grab.is_some() {
+            self.input.mouse = Some(p);
+            self.drag_island(p);
+            return;
+        }
+        if pill::diorama::slide(p.x, clock::mono()) {
+            // Diorama's glass ball in hand follows the pointer.
+            self.input.mouse = Some(p);
+            self.request_frame();
+            return;
+        }
         self.peek_at(p);
         let inside = self.hovering_inside(p) || self.input.down;
         if !inside {
@@ -2275,10 +2420,11 @@ impl App {
     /// move here, so the eyes cost a redraw only when their side or where
     /// they look changes.
     fn peek_at(&mut self, p: Point) {
-        let Some(n) = self.screen.notch.filter(|_| self.st.settings.idle_style == IdleStyle::Eyes) else { return };
+        // (Not in Diorama, which rests as its picture and has no eyes.)
+        let Some(n) = self.screen.notch.filter(|_| self.st.settings.idle_style == IdleStyle::Eyes && !pill::diorama::shows(&self.st)) else { return };
         let now = clock::mono().max(self.st.now);
         let before = notch::peek_key(&self.st, n, now);
-        self.st.ui.peek.point(Point::new(p.x - self.cx, p.y), now, n.w / 2.0);
+        self.st.ui.peek.point(Point::new(p.x - self.notch_cx, p.y), now, n.w / 2.0);
         if self.mode == Mode::Idle && !self.fullscreen_hidden && notch::peek_key(&self.st, n, now) != before {
             self.request_frame();
         }
@@ -2334,26 +2480,22 @@ impl App {
                         // The prayer countdown's OK, the same way.
                         self.input.pressed_id = None;
                         self.prayer_countdown_ok();
+                    } else if self.input.pressed_id == Some(wid(pill::diorama::BALL_ID)) {
+                        // Diorama's glass ball: in hand until the button comes
+                        // up, sliding with the pointer; the island neither
+                        // opens nor moves.
+                        self.input.pressed_id = None;
+                        pill::diorama::grab(&self.st, p.x);
+                        self.cancel_hover();
+                    } else if self.movable() && (self.screen.notch.is_none() || self.island.floating()) {
+                        // Opens when the button comes up (`open_from_press`),
+                        // unless the pointer moves sideways first: then it
+                        // drags the island along the top edge (`drag_island`).
+                        self.grab = Some(Grab { from: self.win.0 + p.x, centre: self.win.0 + self.cx, moved: false });
+                        // Held still on it, it doesn't open by itself either.
+                        self.cancel_hover();
                     } else {
-                        // Clicking a notice jumps to its page (a new version's
-                        // may be waiting under a volume change or a game's readout).
-                        let shown = self.mode == Mode::Notice;
-                        if let Some(n) = self.st.notice.take_if(|_| shown) {
-                            match n.action {
-                                Some(NoticeAction::OpenPage(p)) => self.st.page = p,
-                                Some(NoticeAction::OpenUpdate) => self.st.open_update(),
-                                Some(NoticeAction::OpenApp(_)) => {}
-                                Some(NoticeAction::StartFocus) => {
-                                    self.st.page = PageKind::Focus;
-                                    if !self.st.pomodoro.is_active() {
-                                        self.st.pomodoro.start(self.st.now);
-                                    }
-                                }
-                                None => {}
-                            }
-                        }
-                        self.st.hud = None;
-                        self.expand();
+                        self.open_from_press();
                     }
                 } else if self.text_focus && self.input.pressed_id != self.input.focused {
                     self.blur_text();
@@ -2361,7 +2503,24 @@ impl App {
                 self.request_frame();
             }
             ViewInput::Up { x, y } => {
-                let p = Point::new(x, y);
+                // A drop puts the window back around the island: the point
+                // came in the coordinates of the window as it was.
+                let left = self.win.0;
+                if pill::diorama::let_go(&self.st, clock::mono()) {
+                    // The ball rolls on to its end; the island stays closed under the pointer.
+                    self.input.pressed_id = None;
+                    self.cancel_hover();
+                }
+                if let Some(g) = self.grab.take() {
+                    // What the closed island showed under the press doesn't click.
+                    self.input.pressed_id = None;
+                    if g.moved {
+                        self.dropped_island();
+                    } else {
+                        self.open_from_press();
+                    }
+                }
+                let p = Point::new(x + left - self.win.0, y);
                 self.input.mouse = Some(p);
                 let hit = self.hit_at(p).map(|h| h.id);
                 if let (Some(pid), Some(h)) = (self.input.pressed_id, hit) {
@@ -2438,6 +2597,76 @@ impl App {
             }
         }
         None
+    }
+
+    /// A click on the closed island (pressed and let go, or on a notch's
+    /// island, pressed): a notice jumps to its page, and the island opens.
+    fn open_from_press(&mut self) {
+        // Clicking a notice jumps to its page (a new version's
+        // may be waiting under a volume change or a game's readout).
+        let shown = self.mode == Mode::Notice;
+        if let Some(n) = self.st.notice.take_if(|_| shown) {
+            match n.action {
+                Some(NoticeAction::OpenPage(p)) => self.st.page = p,
+                Some(NoticeAction::OpenUpdate) => self.st.open_update(),
+                Some(NoticeAction::OpenApp(_)) => {}
+                Some(NoticeAction::StartFocus) => {
+                    self.st.page = PageKind::Focus;
+                    if !self.st.pomodoro.is_active() {
+                        self.st.pomodoro.start(self.st.now);
+                    }
+                }
+                None => {}
+            }
+        }
+        self.st.hud = None;
+        self.expand();
+    }
+
+    /// The pointer moved while pressing the closed island: once it has gone
+    /// `spot::DRAG_SLOP` sideways, the island follows it along the top edge,
+    /// as far as it stays on the screen, and back to the middle when it
+    /// comes within `spot::SNAP` of it.
+    fn drag_island(&mut self, p: Point) {
+        let Some(g) = self.grab else { return };
+        let dx = self.win.0 + p.x - g.from;
+        if !g.moved {
+            if dx.abs() < spot::DRAG_SLOP {
+                return;
+            }
+            pinfo!("island: dragged along the top edge");
+            // The left-right cursor every macOS has (columnResizeCursor is macOS 15's).
+            #[allow(deprecated)]
+            NSCursor::resizeLeftRightCursor().set();
+            self.cursor = CursorKind::Arrow;
+        }
+        self.grab = Some(Grab { moved: true, ..g });
+        let sw = self.screen.w as f32;
+        let centre = spot::fit_centre(g.centre + dx, sw, self.island.current().w, self.room().0);
+        self.st.settings.island_x = spot::remember(centre, sw);
+        if g.moved {
+            self.sync_spot();
+        } else {
+            // The window spans the screen for the drag.
+            self.place_window();
+        }
+        self.request_frame();
+    }
+
+    /// A drag along the top edge ended: the island stays there (saved), and
+    /// doesn't open under the pointer that just let go of it.
+    fn dropped_island(&mut self) {
+        self.cancel_hover();
+        match self.st.settings.island_x {
+            Some(x) => pinfo!("island: moved to {:.0} % across the screen", x * 100.0),
+            None => pinfo!("island: back in the middle"),
+        }
+        // The window fits around the spot again.
+        self.place_window();
+        NSCursor::arrowCursor().set();
+        self.save_settings();
+        // Move island to the centre shows in the menu now (or goes).
+        self.refresh_menu();
     }
 
     fn on_resign_key(&mut self) {
@@ -2577,6 +2806,7 @@ impl App {
     fn set_page(&mut self, p: PageKind) {
         if p != self.st.page {
             self.st.page = p;
+            self.st.ui.addon_about = None;
             // Settings is never where the island opens next time.
             if p != PageKind::Settings {
                 self.st.update.sheet = false;
@@ -2816,7 +3046,8 @@ impl App {
         // resting or not, so they go on once someone is back
         // (services::keychain). Told before the worker; nothing while it
         // stays the same.
-        services::keychain::set_watch(open, self.st.settings.usage.notices);
+        let notices = self.st.settings.usage.notices && self.st.ai_usage_on();
+        services::keychain::set_watch(open, notices);
         // The smoke run shows made-up readings (and checks the keychain on
         // its own): nothing is read, even from inside a step.
         if self.smoke_run {
@@ -2824,7 +3055,7 @@ impl App {
         }
         let w = services::usage::Watch {
             open,
-            notices: here && self.st.settings.usage.notices && !self.st.power.saver,
+            notices: here && notices && !self.st.power.saver,
             near_pct: self.st.settings.usage.near_pct,
             use_24h: self.st.settings.use_24h,
             hidden: services::usage::picked(&self.st.settings.usage.hidden),
@@ -2980,7 +3211,7 @@ impl App {
         }
     }
 
-    /// The IELTS, Notes or Add-ons page came on screen: whether the account has
+    /// The IELTS, Notes, Add-ons or AI page came on screen: whether the account has
     /// Studio Pro, now (unless just asked). Never signed in: nothing starts.
     fn set_pro_shown(&mut self, on: bool) {
         if on != self.pro_shown {
@@ -3427,21 +3658,29 @@ impl App {
         }
         self.script_held = held;
         self.prayer_tick();
+        // Caffeine's reminder before last call waits for the island the same
+        // way, behind a prayer's notice, which doesn't wait.
+        let here = !(self.away.0 || self.away.1) && !self.expanded && !self.fullscreen_hidden;
+        if self.last_call.tick(&mut self.st, here) {
+            self.request_frame();
+        }
         self.ielts_tick();
         self.notes_tick();
         self.check_recorder_alive(false);
-        // Prayer times, System, Health, Stocks, Screen recorder, IELTS or
-        // Downloader switched off: its tab is gone.
+        // Prayer times, System, Health, Stocks, Screen recorder, AI usage, IELTS
+        // or Downloader switched off: its tab is gone.
         let gone = match self.st.page {
             PageKind::Prayer => !self.st.prayer_on(),
             PageKind::System => !self.st.system_on(),
             PageKind::Health => !self.st.health_on(),
             PageKind::Stocks => !self.st.stocks_on(),
             PageKind::Reminders => !self.st.reminders_on(),
+            PageKind::Caffeine => !self.st.caffeine_on(),
             PageKind::Record => !self.st.record_on(),
             PageKind::Ielts => !self.st.ielts_on(),
             PageKind::Downloads => !self.st.downloader_on(),
             PageKind::Notes => !self.st.notes_on(),
+            PageKind::Ai => !self.st.ai_usage_on(),
             _ => false,
         };
         if gone {
@@ -3506,13 +3745,17 @@ impl App {
         self.set_oyenza_watch(self.mode == Mode::Expanded(PageKind::Oyenza));
         self.set_today_watch(self.mode == Mode::Expanded(PageKind::Today));
         self.set_health_shown(self.mode == Mode::Expanded(PageKind::Health));
-        self.set_pro_shown(matches!(self.mode, Mode::Expanded(PageKind::Ielts | PageKind::Notes | PageKind::Addons)));
+        self.set_pro_shown(matches!(self.mode, Mode::Expanded(PageKind::Ielts | PageKind::Notes | PageKind::Addons | PageKind::Ai)));
         self.set_stocks_watch();
         self.set_usage_watch();
         // The Pill theme floats the island below the top edge (below the menu
         // bar for what hangs under a notch).
         self.island.set_floating(self.gap_target(&self.mode));
         self.island.step(dt, now);
+        // Where the island was dragged along the top edge: the window for
+        // that spot, and the island in it for this frame's outline.
+        self.sync_spot();
+        self.place_island();
         // The island let go of the notch or docked again under a pointer that
         // didn't move: take the mouse there, or let it through, for where the
         // island is now (the smoke run moves its own pointer).
@@ -3533,7 +3776,7 @@ impl App {
         glass::show(glass_at);
 
         let canvas_r = self.island.canvas_rect_at(self.cx).inset(-2.0, -2.0);
-        let full = Rect::new(0.0, 0.0, self.surface.0, self.surface.1);
+        let full = Rect::new(0.0, 0.0, self.win.1, self.surface.1);
         // Floating at rest, only the content changes (the equalizer, a line,
         // the clock): redraw inside the body, and the shadow and hairline
         // around it stay as drawn. Whole DIPs and one more, so no pixel on its
@@ -3587,7 +3830,7 @@ impl App {
         let (floating, detach) = (self.island.floating(), notch::detach(self.island.top(), notch));
         // The smoke run's pretend notch (CI's Macs have none), painted where a
         // MacBook's camera hides the island, so its pictures show what one shows.
-        let pretend_notch = notch.filter(|_| self.smoke.is_some() && window::faking_notch()).map(|n| Rect::new(self.cx - n.w / 2.0, -12.0, n.w, n.h + 12.0));
+        let pretend_notch = notch.filter(|_| self.smoke.is_some() && window::faking_notch()).map(|n| Rect::new(self.notch_cx - n.w / 2.0, -12.0, n.w, n.h + 12.0));
         self.gfx.set_look(look);
         let mut hits = std::mem::take(&mut self.hits);
         hits.clear();
@@ -3777,7 +4020,7 @@ impl App {
                     "ja-auto" => 25.0,
                     "ja-get" => 75.0,
                     "ja-off" | "prayer-off" => 15.0,
-                    // Prayer times downloads 1.9 MB; Ashar comes 2 seconds in;
+                    // Prayer times downloads about 1 MB; Ashar comes 2 seconds in;
                     // macOS answers where the Mac is (or asks the person).
                     "prayer-get" => 75.0,
                     "prayer-adzan" | "prayer-locate" => 10.0,
@@ -3817,8 +4060,16 @@ impl App {
                     if let Some((check, ok, detail)) = self.smoke_check(name) {
                         sm.note(check, ok, detail);
                     }
-                    // The Settings window's steps picture that window.
-                    let rect = if name.starts_with("settings-window") && settings_host::is_open() { settings_host::frame_top_left() } else { window::frame_top_left() };
+                    // The Settings window's steps picture that window, and the
+                    // drag steps the top of the whole screen (where along it the island is).
+                    let along = name.contains("-drag") || name.ends_with("-centre") || name == "notch-pill-rest";
+                    let rect = if name.starts_with("settings-window") && settings_host::is_open() {
+                        settings_host::frame_top_left()
+                    } else if along {
+                        window::screen_top_left(&self.screen, self.surface.1 as f64)
+                    } else {
+                        window::frame_top_left()
+                    };
                     sm.write_ready(name, rect);
                     sm.phase = SmokePhase::Wait(now);
                 }
@@ -3920,6 +4171,34 @@ impl App {
                 self.st.pomodoro.reset();
                 self.cost = DrawCost::default();
             }
+            // Dragged along the top edge: the music pill (Pill on a screen
+            // without a notch, then floating below one), pressed, moved 300
+            // DIPs right and let go, as the view's mouse events bring it. It
+            // stays closed, there.
+            "pill-drag" | "notch-pill-drag" => {
+                self.leave();
+                self.smoke_drag(300.0);
+            }
+            // A click on it there opens it there, whole on the screen. The
+            // pointer is on it first, as a real click's is (a pointer that
+            // isn't lets the open island close again).
+            "pill-drag-open" => {
+                let p = self.island.body_rect_at(self.cx).center();
+                self.on_pointer(p);
+                self.cancel_hover();
+                let _ = self.on_view_input(ViewInput::Down { x: p.x, y: p.y, double: false });
+                let _ = self.on_view_input(ViewInput::Up { x: p.x, y: p.y });
+            }
+            // Move island to the centre puts it back in the middle.
+            "pill-drag-centre" => {
+                self.leave();
+                self.collapse();
+                self.on_menu(MenuCmd::CentreIsland);
+            }
+            // Resting (notch-pill-collapsed stopped the music), Pill docks in
+            // the notch again, the spot kept for when it floats; the check looks.
+            "notch-pill-rest" => {}
+            "notch-pill-centre" => self.on_menu(MenuCmd::CentreIsland),
             // A made-up Japanese song: its lyrics go in the lyrics cache, as
             // if LRCLIB had answered before, and CI announces it as Spotify
             // would. Back in Classic first, as the menu step is, without the
@@ -3963,7 +4242,7 @@ impl App {
             // OK (what a click on it does). The next step's adzan still comes.
             "prayer-ok" => {
                 let unix = clock::unix_now();
-                if let Some(ashar) = self.st.prayer.site().and_then(|s| poni_core::prayer::day_times(&s, s.local_day(unix)).map(|t| t.ashar)) {
+                if let Some(ashar) = self.st.prayer_site().and_then(|s| poni_core::prayer::day_times(&s, s.local_day(unix)).map(|t| t.ashar)) {
                     self.st.prayer.clock_shift = ashar - 5 * 60 - unix;
                     self.st.prayer.handled_until = Some(ashar - 5 * 60);
                 }
@@ -3974,7 +4253,7 @@ impl App {
                 self.st.settings.prayer.sound = PrayerSound::Adzan;
                 self.st.cmds.push(Command::SaveSettings);
                 let unix = clock::unix_now();
-                if let Some((site, ashar)) = self.st.prayer.site().and_then(|s| poni_core::prayer::day_times(&s, s.local_day(unix)).map(|t| (s, t.ashar))) {
+                if let Some((site, ashar)) = self.st.prayer_site().and_then(|s| poni_core::prayer::day_times(&s, s.local_day(unix)).map(|t| (s, t.ashar))) {
                     self.st.prayer.clock_shift = ashar - 2 - unix;
                     self.st.prayer.handled_until = Some(ashar - 2);
                     pinfo!("smoke: Ashar in {} is {}", site.hhmm(ashar), self.st.prayer.place.as_ref().map_or("", |p| p.label.as_str()));
@@ -3993,6 +4272,30 @@ impl App {
             }
             "prayer-off" => {
                 self.st.settings.set_addon(PRAYER_TIMES.id, false);
+                self.st.cmds.push(Command::SaveSettings);
+            }
+            // Caffeine from the Add-ons tab (built in: nothing downloads),
+            // then its tab, a drink in its log and off again. The drink is a
+            // 2-shot Americano at the minute the Mac's clock shows; data.json
+            // saves it.
+            "caffeine-on" => {
+                self.st.settings.set_addon(poni_core::addons::CAFFEINE.id, true);
+                self.st.cmds.push(Command::SaveSettings);
+            }
+            "caffeine-page" => {
+                self.set_page(PageKind::Caffeine);
+                self.expand();
+            }
+            "caffeine-add" => {
+                use poni_core::caffeine::{local_minute, Bean, Drink, Kind};
+                self.smoke_drinks = Some(self.st.store.caffeine.drinks.len());
+                let (kind, amount, bean) = (Kind::Americano, 2, Bean::Arabica);
+                let at = local_minute(&clock::local_now());
+                self.st.store.caffeine.add(Drink { id: 0, at, kind, amount, bean: Some(bean), mg: kind.mg(amount, bean), name: String::new() });
+                self.st.cmds.push(Command::SaveStore);
+            }
+            "caffeine-off" => {
+                self.st.settings.set_addon(poni_core::addons::CAFFEINE.id, false);
                 self.st.cmds.push(Command::SaveSettings);
             }
             // A plain window goes full screen in a Space of its own (a second
@@ -4072,6 +4375,10 @@ impl App {
             // of this Mac is read), then its keychain reader on test items.
             "ai-page" => {
                 self.st.notice = None;
+                // AI usage is part of Studio Pro: signed in with it for the AI
+                // steps ("ai-secret" ends them).
+                self.st.oyenza.link = OyenzaLink::Connected { account: "a\u{2022}\u{2022}\u{2022}@example.com".into() };
+                self.st.oyenza.pro = Some(true);
                 let now = self.st.now;
                 pages::usage::picture(&mut self.st, pages::usage::Picture::Plans, now);
                 self.set_page(PageKind::Ai);
@@ -4094,6 +4401,8 @@ impl App {
                 self.set_page(PageKind::Ai);
                 self.expand();
             }
+            // The last AI step: signed out again for the ones after it.
+            "ai-secret" => self.st.oyenza = Default::default(),
             // macOS's own now playing, as a browser tab reaches it: the
             // stream stops, tools/mac-smoke.sh starts the MediaRemote
             // adapter's test player, and sound (CI's Macs play none) starts
@@ -4163,6 +4472,34 @@ impl App {
                     let p = Point::new(self.cx - n.w / 2.0 - 260.0, 140.0);
                     self.smoke_point = Some(p);
                     self.on_pointer(p);
+                }
+            }
+            // Diorama around the notch, on the clock look again: its resting
+            // pill is its picture, so where Pill's hides inside the notch it
+            // floats below the menu bar. The glass ball rolls in as the theme
+            // is picked (smoke_ready waits for it); ja-notify goes back to
+            // Classic.
+            "notch-diorama" => {
+                self.st.settings.idle_style = IdleStyle::Clock;
+                self.on_menu(MenuCmd::SetTheme(Theme::Diorama));
+            }
+            // Its glass ball slid by hand to the other end, through the
+            // view's own mouse events: pressed, carried along in three moves
+            // and let go there. Then tapped, back where the sun has it.
+            "notch-diorama-slide" => {
+                if let (Some(p), Some(rest)) = (self.smoke_ball(), pill::diorama::geom(&self.st)) {
+                    let way = if pill::diorama::night(&self.st) { -1.0 } else { 1.0 } * (rest.w - rest.h);
+                    let _ = self.on_view_input(ViewInput::Down { x: p.x, y: p.y, double: false });
+                    for f in [0.3, 0.7, 1.0] {
+                        self.on_pointer(Point::new(p.x + f * way, p.y));
+                    }
+                    let _ = self.on_view_input(ViewInput::Up { x: p.x + way, y: p.y });
+                }
+            }
+            "notch-diorama-tap" => {
+                if let Some(p) = self.smoke_ball() {
+                    let _ = self.on_view_input(ViewInput::Down { x: p.x, y: p.y, double: false });
+                    let _ = self.on_view_input(ViewInput::Up { x: p.x, y: p.y });
                 }
             }
             // Pill floats below the top edge, open and resting; around the
@@ -4315,11 +4652,23 @@ impl App {
             },
             // The eyes are out on the camera's other side.
             "notch-eyes" => !self.st.ui.peek.along(clock::mono()).1 || waited > 3.0,
+            // The glass ball has rolled into place: a second and a half from
+            // the theme's first frame.
+            "notch-diorama" => waited > 2.5,
+            // On to its end (at most 0.6 s), and a tap's roll back (1.1 s).
+            "notch-diorama-slide" | "notch-diorama-tap" => waited > 1.6,
             // The countdown ticks at least once.
             "prayer-page" => waited > 1.5,
             "prayer-adzan" => self.st.prayer.adzan || waited > 6.0,
             "prayer-locate" => self.st.prayer.locate != Locate::Asking || waited > 6.0,
             "prayer-off" => (self.st.addon(PRAYER_TIMES.id) == AddonStatus::Off && !prayer_folder().exists() && self.addons.is_none()) || waited > 10.0,
+            // Built in, Caffeine is on as soon as it's switched on; off, its
+            // tab goes and the island moves to Add-ons.
+            "caffeine-on" => self.st.caffeine_on() || waited > 3.0,
+            "caffeine-page" => (self.expanded && self.st.page == PageKind::Caffeine && waited > 0.6) || waited > 4.0,
+            // data.json is saved 800 ms after a change (`Command::SaveStore`).
+            "caffeine-add" => waited > 1.2,
+            "caffeine-off" => (!self.st.caffeine_on() && self.st.page != PageKind::Caffeine) || waited > 4.0,
             "headphones" => self.smoke_devices.as_ref().is_some_and(|(before, _)| services::audio::list_changes() > *before) || waited > 4.0,
             "fullscreen-hide" => self.fullscreen_hidden || waited > 12.0,
             "fullscreen-stay" => (!self.fullscreen_hidden && window::is_shown() && waited > 1.0) || waited > 6.0,
@@ -4346,15 +4695,68 @@ impl App {
         }
     }
 
+    /// Where Diorama's glass ball is on the resting pill, window DIPs: the
+    /// house end by day, the tree end at night.
+    fn smoke_ball(&self) -> Option<Point> {
+        let rest = pill::diorama::geom(&self.st)?;
+        let body = self.island.body_rect_at(self.cx);
+        let lens = if pill::diorama::night(&self.st) { 1.0 } else { 0.0 };
+        Some(Point::new(body.x + (body.w - rest.w) / 2.0 + rest.h / 2.0 + lens * (rest.w - rest.h), body.center().y))
+    }
+
+    /// A press on the closed island, a move `dx` DIPs sideways and the
+    /// release there, as the view's mouse events bring them: in window DIPs,
+    /// each placed for the window as it is (it spans the screen once the
+    /// drag starts, and goes back around the island at the drop).
+    fn smoke_drag(&mut self, dx: f32) {
+        let p = self.island.body_rect_at(self.cx).center();
+        let from = self.win.0 + p.x;
+        let _ = self.on_view_input(ViewInput::Down { x: p.x, y: p.y, double: false });
+        for step in [spot::DRAG_SLOP + 1.0, dx] {
+            self.on_pointer(Point::new(from + step - self.win.0, p.y));
+        }
+        let _ = self.on_view_input(ViewInput::Up { x: from + dx - self.win.0, y: p.y });
+    }
+
+    /// Page `p` drawn alone offscreen as the window draws it (in this look,
+    /// at the window's scale), on the island's ground: how many of its pixels
+    /// stand clearly apart from that ground, as the Windows self-test counts
+    /// content pixels. An empty page has none.
+    fn smoke_page_pixels(&mut self, p: PageKind) -> usize {
+        let scale = self.gfx.scale();
+        let area = Rect::new(0.0, 0.0, self.st.settings.expanded_width - 2.0 * pages::PAD, pages::content_height(p, &self.st));
+        let Some(bmp) = crate::gfx::Bitmap::new((area.w * scale).ceil() as usize, (area.h * scale).ceil() as usize, scale) else { return 0 };
+        let look = self.look();
+        self.gfx.set_look(look);
+        {
+            let mut c = self.gfx.canvas(bmp.ctx());
+            c.fill_rect(area, palette::ISLAND);
+            let (mut input, mut hits) = (Input::default(), Vec::new());
+            let now = self.st.now;
+            let mut ui = Ui::new(&mut c, &mut input, &mut hits, now);
+            pages::draw_page(&mut ui, &mut self.st, area, p);
+        }
+        // Premultiplied BGRA, opaque on the ground.
+        let ground = [look.ground.b, look.ground.g, look.ground.r].map(|v| (v.clamp(0.0, 1.0) * 255.0).round() as u8);
+        bmp.pixels().as_chunks::<4>().0.iter().filter(|px| px[3] >= 200 && px[..3].iter().zip(ground).any(|(&a, b)| a.abs_diff(b) >= 140)).count()
+    }
+
     /// The Pill theme on the real window: where the island sits, and which
     /// points take the mouse. Without a notch it floats `TOP_GAP` below the
     /// top edge and the gap above it takes the mouse; around a notch it rests
     /// inside the notch (the eyes peek out beside it) and the music pill and
     /// the open card float below it, where the gap and the notch take the
-    /// mouse and the menu bar beside the notch doesn't.
+    /// mouse and the menu bar beside the notch doesn't. Diorama's resting
+    /// picture floats there too.
     fn pill_report(&self) -> (&'static str, bool, String) {
         let body = self.island.body_rect_at(self.cx);
-        let look = *self.look() == poni_core::look::PILL && !glass::shown();
+        // Pill's own look, or Diorama's of the side of the day its ball rests on.
+        let want = match self.st.settings.theme {
+            Theme::Diorama => poni_core::look::diorama(pill::diorama::night(&self.st)),
+            _ => &poni_core::look::PILL,
+        };
+        let look = self.look() == want && !glass::shown();
+        let look_name = if self.st.settings.theme == Theme::Diorama { "Diorama's look" } else { "Pill's look" };
         let at = |x: f32, y: f32| self.hovering_inside(Point::new(x, y));
         let (ok, place) = match self.screen.notch {
             None => {
@@ -4389,12 +4791,13 @@ impl App {
         (
             "pill-theme",
             ok && look,
-            format!("{:?}, {:.0}x{:.0} DIP r {:.0}, {place}; Pill's look: {look}", self.mode, g.w, g.h, g.r),
+            format!("{:?}, {:.0}x{:.0} DIP r {:.0}, {place}; {look_name}: {look}", self.mode, g.w, g.h, g.r),
         )
     }
 
-    /// What each new part of the app did on a real Mac.
-    fn smoke_check(&self, name: &str) -> Option<(&'static str, bool, String)> {
+    /// What each new part of the app did on a real Mac (mutable: a page is
+    /// drawn offscreen for some).
+    fn smoke_check(&mut self, name: &str) -> Option<(&'static str, bool, String)> {
         let gib = |b: u64| b as f64 / (1u64 << 30) as f64;
         match name {
             "settings-window" => {
@@ -4530,6 +4933,30 @@ impl App {
                 );
                 Some(("eyes-around-notch", ok, d))
             }
+            // Diorama's resting pill: floating as Pill's music pill does, at
+            // its picture's size.
+            "notch-diorama" => {
+                let (_, placed, d) = self.pill_report();
+                let g = self.island.current();
+                let sized = pill::diorama::geom(&self.st).is_some_and(|p| (g.w, g.h) == (p.w, p.h));
+                let ok = placed && self.mode == Mode::Idle && sized;
+                Some(("diorama-rests-floating", ok, format!("{d}; its picture's size: {sized}")))
+            }
+            // Slid to the far end, the ball stays there against the sun and
+            // the theme with it; tapped, it follows the sun again. Neither
+            // opens or moves the island.
+            "notch-diorama-slide" | "notch-diorama-tap" => {
+                let slid = name == "notch-diorama-slide";
+                let left = pill::diorama::left_by_hand(&self.st);
+                let (_, placed, d) = self.pill_report();
+                let ok = left.is_some() == slid && !pill::diorama::held() && !self.expanded && self.mode == Mode::Idle && placed;
+                let side = match left {
+                    Some(true) => "left on the tree: the theme keeps the night",
+                    Some(false) => "left on the house: the theme keeps the day",
+                    None => "where the sun has it",
+                };
+                Some((if slid { "diorama-slid-by-hand" } else { "diorama-tapped-back" }, ok, format!("the ball is {side}; the island is {}; {d}", if self.expanded { "open" } else { "closed" })))
+            }
             "music-cost" | "pill-music-cost" => {
                 let c = self.cost;
                 let per = |s: f64| if c.frames > 0 { s / c.frames as f64 * 1e6 } else { 0.0 };
@@ -4573,6 +5000,42 @@ impl App {
                     self.hovering
                 );
                 Some(("pill-ear-stays-open", ok, d))
+            }
+            "pill-drag" | "notch-pill-drag" => {
+                let sw = self.screen.w as f32;
+                let (home, centre) = (self.screen.cx as f32, self.win.0 + self.cx);
+                let want = (home + 300.0).min(sw - self.island.current().w / 2.0 - self.room().0);
+                // Around a notch the window keeps the notch in it (Pill docks there to rest).
+                let notch_in = self.screen.notch.is_none_or(|n| self.notch_cx >= n.w / 2.0 && self.notch_cx + n.w / 2.0 <= self.win.1);
+                let ok = !self.expanded && self.st.settings.island_x.is_some() && (centre - want).abs() < 1.5 && notch_in;
+                let d = format!(
+                    "{:?}: centre {home:.0} -> {centre:.0} DIP across a {sw:.0} DIP screen (want {want:.0}), saved {:?}, {}; window {:.0}+{:.0}, the notch (or middle) at {:.0} in it",
+                    self.mode,
+                    self.st.settings.island_x,
+                    if self.expanded { "opened" } else { "closed" },
+                    self.win.0,
+                    self.win.1,
+                    self.notch_cx
+                );
+                Some((if self.screen.notch.is_some() { "notch-pill-dragged" } else { "island-dragged" }, ok, d))
+            }
+            "pill-drag-open" => {
+                let sw = self.screen.w as f32;
+                let b = self.island.body_rect_at(self.cx);
+                let (l, r) = (self.win.0 + b.x, self.win.0 + b.right());
+                let ok = self.expanded && l >= -0.5 && r <= sw + 0.5 && self.win.0 + b.center().x > self.screen.cx as f32;
+                Some(("island-opens-at-its-spot", ok, format!("{:?} from {l:.0} to {r:.0} DIP across a {sw:.0} DIP screen", self.mode)))
+            }
+            "notch-pill-rest" => {
+                let ok = self.spot().is_some() && self.mode == Mode::Idle && !self.island.floating() && (self.cx - self.notch_cx).abs() < 0.5;
+                let d = format!("{:?}, the island at {:.0} and the notch at {:.0} in the window, spot {:?}", self.mode, self.cx, self.notch_cx, self.spot());
+                Some(("notch-pill-docks-at-the-notch", ok, d))
+            }
+            "pill-drag-centre" | "notch-pill-centre" => {
+                let (home, centre) = (self.screen.cx as f32, self.win.0 + self.cx);
+                let ok = self.st.settings.island_x.is_none() && (centre - home).abs() < 0.5 && self.win.1 == self.surface.0;
+                let d = format!("centre {centre:.0} DIP (the notch or middle: {home:.0}), window {:.0} wide for a {:.0} room, saved {:?}", self.win.1, self.surface.0, self.st.settings.island_x);
+                Some((if self.screen.notch.is_some() { "notch-pill-centred" } else { "island-centred" }, ok, d))
             }
             "pill-hover" => {
                 let (now, rest) = (self.island.current(), activities::geom(&self.mode, &self.st));
@@ -4645,12 +5108,12 @@ impl App {
             "prayer-page" => {
                 let tabs = pages::tabs(&self.st);
                 let now = self.st.prayer_now();
-                let next = self.st.prayer.site().and_then(|s| poni_core::prayer::next_prayer(&s, now).map(|m| format!("{} at {}", m.prayer.name(), s.hhmm(m.at))));
+                let next = self.st.prayer_site().and_then(|s| poni_core::prayer::next_prayer(&s, now).map(|m| format!("{} at {}", m.prayer.name(), s.hhmm(m.at))));
                 let ok = self.st.page == PageKind::Prayer && tabs.contains(&PageKind::Prayer) && next.is_some();
                 Some(("prayer-page", ok, format!("{} tabs; next: {}", tabs.len(), next.unwrap_or_else(|| "none".into()))))
             }
             "prayer-ok" => {
-                let running = self.st.prayer.site().and_then(|s| poni_core::prayer::countdown(&s, self.st.prayer_now(), self.st.settings.prayer.remind_before_min));
+                let running = self.st.prayer_site().and_then(|s| poni_core::prayer::countdown(&s, self.st.prayer_now(), self.st.settings.prayer.remind_before_min));
                 let shown = activities::prayer_countdown(&self.st);
                 let ok = running.is_some() && shown.is_none() && self.st.prayer.countdown_ok == running.map(|(m, _)| m.at);
                 Some(("prayer-ok", ok, format!("countdown {:?}, on the island: {shown:?}", running.map(|(m, left)| (m.prayer, left)))))
@@ -4676,6 +5139,53 @@ impl App {
                 let tab = pages::tabs(&self.st).contains(&PageKind::Prayer);
                 let ok = status == AddonStatus::Off && gone && self.st.prayer.places.is_none() && !tab && self.addons.is_none();
                 Some(("prayer-off", ok, format!("{status:?}; files {}; Prayer tab: {tab}", if gone { "deleted" } else { "still there" })))
+            }
+            // Built in, so switching it on starts nothing: no download, and
+            // the add-ons' downloader (stopped with Prayer times) stays so.
+            "caffeine-on" => {
+                let addon = &poni_core::addons::CAFFEINE;
+                let status = self.st.addon(addon.id);
+                let tab = pages::tabs(&self.st).contains(&PageKind::Caffeine);
+                let ok = status == AddonStatus::Ready && tab && self.addons.is_none();
+                let downloader = if self.addons.is_none() { "not started" } else { "running" };
+                Some(("caffeine-addon", ok, format!("{}; Caffeine tab: {tab}; add-ons' downloader {downloader}", status.line(addon, true))))
+            }
+            // Open at the page's size, and the page drew: drawn alone
+            // offscreen, an empty page has no content pixels.
+            "caffeine-page" => {
+                let lit = self.smoke_page_pixels(PageKind::Caffeine);
+                let (g, want) = (self.island.current(), self.geom_for(&Mode::Expanded(PageKind::Caffeine)));
+                let tabs = pages::tabs(&self.st);
+                let sized = (g.w - want.w).abs() < 0.5 && (g.h - want.h).abs() < 0.5;
+                let ok = self.mode == Mode::Expanded(PageKind::Caffeine) && tabs.contains(&PageKind::Caffeine) && sized && lit >= 20;
+                let d = format!("{:?} at {:.0}x{:.0} DIP (the page's {:.0}x{:.0}), {} tabs; {lit} content pixels in the page drawn alone", self.mode, g.w, g.h, want.w, want.h, tabs.len());
+                Some(("caffeine-page", ok, d))
+            }
+            // The drink is in the log and today's count, data.json (saved a
+            // moment later) holds the same log, and the page draws it.
+            "caffeine-add" => {
+                use poni_core::caffeine::{local_minute, Today};
+                let lit = self.smoke_page_pixels(PageKind::Caffeine);
+                let before = self.smoke_drinks.unwrap_or(0);
+                let log = &self.st.store.caffeine;
+                let today = Today::of(log, &self.st.settings.caffeine, local_minute(&clock::local_now()));
+                let (saved, _): (Store, _) = load_json(&paths::store_path());
+                let kept = saved.caffeine == *log;
+                let ok = log.drinks.len() == before + 1 && today.count >= 1 && kept && lit >= 20;
+                let d = format!(
+                    "{before} -> {} drinks in the log; today {} drinks, {:.0} mg; data.json holds them: {kept}; {lit} content pixels in the page drawn alone",
+                    log.drinks.len(),
+                    today.count,
+                    today.total_mg
+                );
+                Some(("caffeine-drink", ok, d))
+            }
+            "caffeine-off" => {
+                let status = self.st.addon(poni_core::addons::CAFFEINE.id);
+                let tab = pages::tabs(&self.st).contains(&PageKind::Caffeine);
+                let ok = status == AddonStatus::Off && !tab && self.st.page != PageKind::Caffeine && self.mode != Mode::Expanded(PageKind::Caffeine);
+                let d = format!("{status:?}; Caffeine tab: {tab}; {:?}; {} drinks in the log", self.mode, self.st.store.caffeine.drinks.len());
+                Some(("caffeine-off", ok, d))
             }
             "fullscreen-hide" => {
                 let ok = self.front_full_screen && self.fullscreen_hidden && !window::is_shown();
@@ -5158,6 +5668,9 @@ fn system_report(st: &AppState) -> (bool, String) {
 pub(crate) fn theme_accent(theme: Theme) -> Color {
     if oyen::on(theme) {
         oyen::ORANGE
+    } else if theme == Theme::Diorama {
+        // Its own, which its day and night looks paint as theirs.
+        poni_core::look::DIORAMA_ACCENT
     } else {
         services::system_accent().unwrap_or(palette::BLUE)
     }
@@ -5237,7 +5750,7 @@ pub fn draw_content(
 
 // ---------------------------------------------------------------- smoke test bookkeeping
 
-const SMOKE_STEPS: [&str; 77] = [
+const SMOKE_STEPS: [&str; 90] = [
     "idle",
     "hover",
     "open-focus",
@@ -5264,14 +5777,23 @@ const SMOKE_STEPS: [&str; 77] = [
     "pill-collapsed",
     "pill-hover",
     "pill-music-cost",
+    "pill-drag",
+    "pill-drag-open",
+    "pill-drag-centre",
     "notch-oyen-open",
     "notch-oyen-collapsed",
     "notch-glass-open",
     "notch-pill-open",
     "notch-pill-music",
+    "notch-pill-drag",
     "notch-pill-collapsed",
+    "notch-pill-rest",
+    "notch-pill-centre",
     "notch-pill-ear",
     "notch-eyes",
+    "notch-diorama",
+    "notch-diorama-slide",
+    "notch-diorama-tap",
     "ja-notify",
     "ja-auto",
     "ja-get",
@@ -5284,6 +5806,10 @@ const SMOKE_STEPS: [&str; 77] = [
     "prayer-stop",
     "prayer-locate",
     "prayer-off",
+    "caffeine-on",
+    "caffeine-page",
+    "caffeine-add",
+    "caffeine-off",
     "fullscreen-hide",
     "fullscreen-stay",
     "fullscreen-back",

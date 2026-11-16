@@ -11,7 +11,8 @@
 # shows. Pill floats below the top edge (pill-*), and around the notch rests
 # inside it while its music and open card float below it (notch-pill-*); its pill-theme
 # check in the report says where the island sat and which points took the
-# mouse.
+# mouse. Diorama's resting pill is its picture, so it floats below the notch
+# too (notch-diorama).
 #
 # Usage: tools/mac-smoke.sh "<path to the app's poni binary>"
 # Not -e: the report must print even when a check fails.
@@ -173,6 +174,8 @@ while kill -0 $pid 2>/dev/null && [ $SECONDS -lt $deadline ]; do
     case "$base" in
       # The menu opens under the menu bar item at the top right.
       *menu) screencapture -x "smoke/shot-$base.png" || true ;;
+      # Where along the top edge the island sits: the screen's whole width.
+      *-drag|*-drag-open|*-centre|*pill-rest) screencapture -x -R "$x,0,$w,$(( y + h + 40 ))" "smoke/shot-$base.png" || true ;;
       *) screencapture -x -R "$left,0,$(( w + 80 )),$(( y + h + 40 ))" "smoke/shot-$base.png" || true ;;
     esac
     if [ $shots -eq 0 ]; then screencapture -x smoke/screen-full.png || true; fi

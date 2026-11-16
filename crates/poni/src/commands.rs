@@ -71,7 +71,7 @@ pub enum OyenzaCmd {
     CheckPro,
 }
 
-/// Requests for the Notifications add-on (`services::notifications`).
+/// Requests for Notifications (`services::notifications`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NotifyCmd {
     /// Ask Windows to let the island read notifications (its question).
@@ -100,6 +100,9 @@ pub enum UsageCmd {
     CancelConnect,
     /// Disconnect inference.oyenza.com (its key stops working there too).
     Disconnect,
+    /// Start a service's own sign-in on this computer (Claude Code's
+    /// `claude auth login`, or the Claude app): `studio_usage::claude::sign_in`.
+    SignIn(ProviderId),
     /// Take a service's card off the tab.
     Hide(ProviderId),
     /// Put it back, even when nothing of it is on this computer (a service
@@ -117,6 +120,7 @@ impl std::fmt::Debug for UsageCmd {
             UsageCmd::Connect => f.write_str("Connect"),
             UsageCmd::CancelConnect => f.write_str("CancelConnect"),
             UsageCmd::Disconnect => f.write_str("Disconnect"),
+            UsageCmd::SignIn(id) => write!(f, "SignIn({})", id.key()),
             UsageCmd::Hide(id) => write!(f, "Hide({})", id.key()),
             UsageCmd::Show(id) => write!(f, "Show({})", id.key()),
         }
@@ -231,7 +235,7 @@ pub enum Command {
     /// Get one of Prayer times' online city files ("ed", "near/55_-5"; the
     /// answer: `AppEvent::Cities`).
     GetCities(String),
-    /// The Notifications add-on.
+    /// Notifications.
     Notify(NotifyCmd),
     Usage(UsageCmd),
     /// The Downloads page (`pages::downloads`).

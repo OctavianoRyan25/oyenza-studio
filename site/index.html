@@ -34,7 +34,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..700&display=swap">
 <link rel="preload" as="image" href="assets/wall/morning.jpg">
-<script>(function(r){r.classList.add("js");if(window.matchMedia&&matchMedia("(prefers-reduced-motion: reduce)").matches)r.classList.add("still");setTimeout(function(){if(!r.hasAttribute("data-ready"))r.classList.remove("js")},3000)})(document.documentElement);</script>
+<script>(function(r){r.classList.add("js");if(window.matchMedia&&matchMedia("(prefers-reduced-motion: reduce)").matches)r.classList.add("still");if(window.matchMedia&&matchMedia("(max-width: 734px) and (pointer: coarse)").matches)r.classList.add("phone");setTimeout(function(){if(!r.hasAttribute("data-ready"))r.classList.remove("js")},3000)})(document.documentElement);</script>
 <style>
 /* The page follows the system of a big product page, measured on apple.com:
    SF Pro (Inter where SF isn't on the computer), one short headline and one
@@ -299,9 +299,25 @@ main { container-type: inline-size; }
    "Everything new" sheet (#m-new), release by release. */
 .news-tile.shot { padding: 0 0 30px; overflow: hidden; }
 .news-tile.shot > p { padding: 0 32px; }
-.news-tile.wide { grid-column: span 2; }
+/* A wide card spans two columns. Its width and margins undo .wide, the page container's rule, which this class name
+   also matches. */
+.news-tile.wide { grid-column: span 2; width: auto; margin-inline: 0; }
 .news-visual { position: relative; display: grid; place-items: center; height: 240px; margin-bottom: 14px; overflow: hidden; background: #f4d2b8 url("assets/wall/morning.jpg") center 40% / cover no-repeat; }
 .news-visual > img { width: auto; height: auto; max-width: 88%; max-height: 74%; filter: drop-shadow(0 16px 28px rgba(0, 0, 0, 0.32)); }
+/* Diorama's resting pill, 190 DIP long. In the 0.2.29 card at twice its size (each art pixel two, four on sharper
+   screens), at rest and then with the glass ball held halfway; in the 0.2.27 card at its own size, at four moments
+   of a day. Every picture keeps the gap the pill floats in above it, so the rows part by themselves and the block's
+   own bottom padding centres it. */
+.dio-pair, .dio-stack { display: grid; padding-bottom: 12px; }
+.dio-pair { grid-template-columns: 380px; }
+.dio-stack { grid-template-columns: 190px; padding-bottom: 8px; }
+.dio-pair img, .dio-stack img, .dio-day img { width: 100%; height: auto; }
+.dio-pair img, .dio-stack img, .dio-day img, .dio-strip img, .dio-look img { filter: drop-shadow(0 5px 9px rgba(40, 30, 10, 0.3)); }
+/* The glass ball held halfway (slide.webp), a hand on it as the pointer shows there: the fingertip low on the ball,
+   a little right of its middle. The hand is 20x24 DIP, so 40x48 on a picture at twice the pill's size. */
+.dio-held { position: relative; display: block; }
+.dio-held > img { display: block; }
+.dio-hand { position: absolute; left: 47.37%; top: 73.9%; width: 10.53%; height: auto; aspect-ratio: 20 / 24; filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.28)); }
 /* An open island hangs from the top of the screen: here from the card's top edge, larger than the card. */
 .news-visual.top > img { position: absolute; top: 0; width: 150%; max-width: none; max-height: none; }
 .news-visual.top.left > img { left: 7%; }
@@ -316,6 +332,32 @@ main { container-type: inline-size; }
 .ctx-menu span:first-child { background: #0a84ff; color: #fff; }
 .ctx-menu .on::before { content: "\2713"; position: absolute; left: 8px; }
 .ctx-menu i { height: 1px; margin: 4px 6px; background: rgba(0, 0, 0, 0.12); }
+/* Move the island: the top of a maximized browser, drawn, with the island dragged off the middle onto the free end of
+   its tab strip. The tabs stop short of the island: nothing overlaps them. */
+.browser-top { position: absolute; inset: 0 0 auto; height: 64px; background: #fff; box-shadow: 0 1px 0 rgba(0, 0, 0, 0.08), 0 12px 28px rgba(0, 0, 0, 0.16); font: 500 11px/1 var(--font-text); letter-spacing: -0.01em; color: #3c4043; text-align: left; }
+.browser-strip { position: absolute; inset: 0 0 auto; height: 31px; background: #dfe3e8; }
+.browser-tabs { position: absolute; left: 8px; right: 342px; top: 6px; height: 25px; display: flex; gap: 2px; }
+.browser-tab { flex: 0 1 140px; min-width: 0; display: flex; align-items: center; gap: 7px; padding: 0 12px; border-radius: 8px 8px 0 0; white-space: nowrap; }
+.browser-tab.on { background: #fff; }
+.browser-tab i { flex: none; width: 12px; height: 12px; border-radius: 50%; background: #9aa0a6; }
+.browser-tab span { overflow: hidden; text-overflow: ellipsis; }
+.browser-new { flex: none; width: 24px; display: grid; place-items: center; font: 400 17px/1 var(--font-text); color: #5f6368; }
+.browser-ctl { position: absolute; top: 0; right: 0; width: 108px; height: 31px; fill: none; stroke: #3c4043; stroke-width: 1; }
+.browser-url { position: absolute; left: 12px; right: 12px; top: 36px; height: 23px; display: flex; align-items: center; padding: 0 14px; border-radius: 12px; background: #f1f3f4; color: #80868b; font-weight: 400; }
+.browser-isl { position: absolute; top: 0; right: 114px; line-height: 0; }
+.browser-isl img { height: 20px; width: auto; filter: drop-shadow(0 6px 12px rgba(0, 0, 0, 0.28)); }
+/* The cursor Windows shows while the island is dragged, below the island's words. */
+.browser-cursor { position: absolute; left: 50%; top: 16px; width: 26px; height: 15px; margin-left: -13px; }
+/* Beside other cards, in a card one column wide, the browser keeps one tab and the island, a little smaller, sits at
+   the end of the tab strip, clear of the card's round corner. (On a phone the rules further down fit every card.) */
+@container (min-width: 640.01px) {
+  .news-tile:not(.wide) .browser-ctl, .news-tile:not(.wide) .browser-new, .news-tile:not(.wide) .browser-tab + .browser-tab { display: none; }
+  .news-tile:not(.wide) .browser-isl { right: 22px; }
+  .news-tile:not(.wide) .browser-isl img { height: 16px; }
+  .news-tile:not(.wide) .browser-tabs { right: 203px; }
+  .news-tile:not(.wide) .browser-tab { padding: 0 8px; gap: 6px; }
+  .news-tile:not(.wide) .browser-cursor { top: 12px; }
+}
 .sheet-body .new-list { list-style: none; padding: 0; gap: 16px; }
 .new-list li { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 14px; align-items: start; }
 .new-list .ic { width: 30px; height: 30px; border-radius: 8px; background: var(--c, #8e8e93); color: #fff; display: grid; place-items: center; }
@@ -337,6 +379,9 @@ main { container-type: inline-size; }
 .gcard .gsky { position: relative; margin-top: 28px; display: flex; justify-content: center; align-items: flex-start; padding-inline: 16px; }
 .gcard .gsky img { max-width: 100%; height: auto; }
 .gcard .gsky .whole { width: 100%; border-radius: 18px; }
+/* The looks' picture is taller than the other cards' pictures: it shows whole in a box of their shape, so the gallery
+   keeps its height. */
+.gcard .gsky .whole { aspect-ratio: 1760 / 1094; object-fit: contain; }
 .gcard .gsky.pad { padding: 0 28px 28px; }
 .gal-ctrl { display: flex; align-items: center; justify-content: center; gap: 14px; margin-top: 30px; }
 .gal-ctrl .icon-btn { width: 36px; height: 36px; border-radius: 50%; background: #e8e8ed; color: var(--ink); }
@@ -399,7 +444,7 @@ main { container-type: inline-size; }
 .cap { min-width: 60px; height: 52px; padding: 0 16px; display: grid; place-items: center; border-radius: 12px; background: linear-gradient(#fff, #f2f2f5); box-shadow: inset 0 -3px 0 rgba(0, 0, 0, 0.08), 0 1px 0 rgba(0, 0, 0, 0.06), 0 10px 24px rgba(0, 0, 0, 0.08); font: 600 17px/1 var(--font-text); }
 .keys .plus { font: 400 21px/1 var(--font-text); color: rgba(29, 29, 31, 0.6); }
 
-/* ---------- four looks */
+/* ---------- five looks */
 .looks-stage { position: relative; isolation: isolate; overflow: hidden; border-radius: var(--r); height: clamp(300px, 34vw, 440px); background: #f4d2b8; }
 .lk { position: absolute; inset: 0; opacity: 0; transition: opacity 0.6s var(--ease); isolation: isolate; }
 .lk.on { opacity: 1; }
@@ -416,6 +461,10 @@ main { container-type: inline-size; }
 .sw-oyen { background: radial-gradient(circle at 50% 55%, var(--orange) 0 34%, var(--cream) 36%); }
 .sw-glass { background: linear-gradient(140deg, #ffffff 10%, #cfd9e8 55%, #f3d8c4 100%); }
 .sw-pill { width: 44px !important; border-radius: 999px !important; background: #000; }
+.sw-diorama { width: 44px !important; border-radius: 999px !important; background: linear-gradient(#8faee2 0 58%, #6f9048 58%); box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.12), inset 0 0 0 3px #efe9db !important; }
+/* Diorama's look is its resting pill: the 400 % shot at its own size, so every art pixel is four (on a narrower
+   stage, half that: every art pixel two). */
+.dio-look img { width: 760px; image-rendering: pixelated; }
 .look-cap { text-align: center; margin: 18px auto 0; max-width: 34em; min-height: 3em; }
 
 .cards3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
@@ -427,6 +476,29 @@ main { container-type: inline-size; }
 .strip .tag { position: absolute; left: 10px; bottom: 8px; font: 600 11px/1 var(--font-text); letter-spacing: 0.02em; color: rgba(29, 29, 31, 0.72); background: rgba(255, 255, 255, 0.75); padding: 5px 8px; border-radius: 999px; }
 .strip + .strip { border-top: 1px solid rgba(255, 255, 255, 0.5); }
 .pill-strip { height: 132px; }
+/* Diorama's resting pill, at twice its size: each art pixel is two, and four on sharper screens (the 400 % shots). */
+.dio-strip { height: 144px; }
+.dio-strip .isl { padding-inline: 12px; }
+.dio-strip .isl > img, .dio-strip .dio-held { width: 380px; max-width: 100%; }
+.dio-strip .dio-held > img { width: 100%; height: auto; }
+.dio-day { display: grid; grid-template-columns: repeat(2, minmax(0, 380px)); justify-content: center; gap: 0 16px; padding: 4px 14px 0; }
+/* The island around the pill, by day and at night: the open card, then the music pill and a notice together. */
+.dio-pills { height: auto; display: grid; justify-items: center; padding: 6px 0 22px; }
+.dio-pills img { max-width: calc(100% - 24px); height: auto; }
+.dio-island { background: var(--alt); }
+/* The slide as a film, in the sheet only: at its own pixels, so each art pixel is two (a phone shows it at half
+   that). It is asked for when the sheet opens, not with the page: a closed sheet is not drawn, and a lazy picture
+   loads only once it is. With reduced motion the ball held halfway stands in, the gap it floats in above it.
+   The card sits in a plain box: as a row of the sheet's grid itself, a card that clips would be squeezed to nothing. */
+.dio-film .strip { height: auto; display: grid; place-items: center; padding: 28px 16px; }
+.dio-film .strip img { width: 380px; max-width: 100%; height: auto; image-rendering: pixelated; filter: drop-shadow(0 5px 9px rgba(40, 30, 10, 0.3)); }
+@media (max-width: 520px) { .dio-film .strip img { width: 190px; } }
+.dio-film .still-cap { display: none; }
+@media (prefers-reduced-motion: reduce) {
+  .dio-film .strip { padding-top: 0; }
+  .dio-film .film-cap { display: none; }
+  .dio-film .still-cap { display: inline; }
+}
 .shot-card { margin: 0; border-radius: 18px; overflow: hidden; background: var(--alt); }
 .shot-card img { width: 100%; }
 .shot-card figcaption { padding: 14px 16px 16px; }
@@ -481,6 +553,16 @@ main { container-type: inline-size; }
 .os-card > .ico { width: 48px; height: 48px; margin-bottom: 10px; stroke: none; }
 .os-card .btn { margin-top: 14px; }
 .os-card .link { margin-top: 8px; background: none; border: 0; cursor: pointer; font: 400 17px/1.47 var(--font-text); }
+/* ---------- on a phone, Get Oyenza Studio sends the link to your computer: an installer can't run on a phone */
+.send-wrap, .send-word { display: none; }
+.phone .send-wrap { display: block; margin-bottom: 20px; }
+.phone .send-word { display: inline; }
+.phone .dl-word, .phone #get .os-cards .btn { display: none; }
+.send-card > .ico { stroke: currentColor; stroke-width: 1.5; }
+.send-alt { display: flex; flex-wrap: wrap; justify-content: center; gap: 0 22px; }
+.send-url { width: 100%; max-width: 420px; margin-top: 12px; padding: 11px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--alt); color: var(--ink); font: 400 15px/1.4 var(--font-text); text-align: center; }
+.send-or { margin-top: 8px; font-weight: 400; }
+.sent-note { margin-top: 10px; color: var(--ink); }
 
 /* ---------- pricing: Free, and Pro before it can be bought (no buy button until it can) */
 .price-cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
@@ -496,6 +578,17 @@ main { container-type: inline-size; }
 /* The button sits at the bottom, level with the end of the taller card. */
 .price-card .btn { align-self: flex-start; margin-top: auto; }
 .price-strip { border-radius: 14px; margin-top: 4px; }
+/* Each Pro feature is a row that opens what it does, so people know before they buy. */
+.pro-feats { list-style: none; margin: 8px -12px 0; padding: 0; display: grid; gap: 2px; }
+.pro-feat { all: unset; box-sizing: border-box; cursor: pointer; width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) 26px; gap: 14px; align-items: center; padding: 12px; border-radius: 14px; transition: background-color 0.2s var(--ease); }
+.pro-feat:hover { background: rgba(0, 0, 0, 0.05); }
+.pro-feat:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.pro-feat b { display: block; color: var(--ink); font-weight: 600; }
+.pro-feat i { width: 26px; height: 26px; border-radius: 50%; background: #333336; color: #fff; display: grid; place-items: center; }
+.pro-feat i .ico { width: 13px; height: 13px; stroke-width: 2.4; }
+.sheet-shot { position: relative; isolation: isolate; overflow: hidden; border-radius: 18px; padding-bottom: 20px; margin: 6px 0 4px; }
+/* The island runs on past the frame: only its top part is the picture. */
+.sheet-shot.cut { padding-bottom: 0; }
 .price-facts { margin-top: 20px; }
 
 .foot { background: var(--alt); padding: 0 0 calc(40px + env(safe-area-inset-bottom, 0px)); }
@@ -533,6 +626,7 @@ dialog.more-sheet::backdrop { background: rgba(0, 0, 0, 0.42); -webkit-backdrop-
   .sec { --sp: 120px; }
   .split { grid-template-columns: minmax(0, 1fr); gap: 36px; }
   .news { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .dio-look img { width: 380px; }
   .rest-pin { grid-template-columns: minmax(0, 290px) minmax(0, 1fr); gap: 28px; }
   .oyenza { grid-template-columns: minmax(0, 1fr); padding: 48px; }
   .specs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -558,6 +652,16 @@ dialog.more-sheet::backdrop { background: rgba(0, 0, 0, 0.42); -webkit-backdrop-
   .news-tile.shot > p { padding: 0 24px; }
   .news-visual { height: 200px; }
   .ctx-menu { top: 14%; }
+  .browser-ctl { display: none; }
+  .browser-isl { right: 8px; }
+  .browser-isl img { height: 18px; }
+  .browser-tabs { right: 210px; }
+  .browser-tab { padding: 0 10px; gap: 6px; }
+  .browser-tab + .browser-tab { display: none; }
+  .browser-cursor { top: 14px; }
+  .dio-pair { grid-template-columns: minmax(0, 285px); }
+  .dio-day { grid-template-columns: minmax(0, 380px); }
+  .dio-look img { width: 100%; image-rendering: auto; }
   .stats { gap: 28px; margin-top: 44px; }
   .stat > b { font-size: 32px; }
   .specs { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
@@ -568,6 +672,7 @@ dialog.more-sheet::backdrop { background: rgba(0, 0, 0, 0.42); -webkit-backdrop-
   .tile-pose { width: 60px; height: 60px; }
   .tile-shot { margin: 0 10px 10px; }
   .gcard p { padding: 26px 24px 0; font-size: 14px; line-height: 1.28577; letter-spacing: -0.016em; }
+  .gcard .gsky .whole { aspect-ratio: auto; }
   .oyenza { padding: 36px 26px; }
   .pose { max-width: 34%; }
   .ruby { padding: 10px 12px 8px; border-radius: 14px; }
@@ -645,6 +750,7 @@ dialog.more-sheet::backdrop { background: rgba(0, 0, 0, 0.42); -webkit-backdrop-
   <symbol id="i-cal" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M8 3v4M16 3v4M3.5 10h17"/></symbol>
   <symbol id="i-gauge" viewBox="0 0 24 24"><path d="m12 14 4-4"/><path d="M3.8 18.5a9.5 9.5 0 1 1 16.4 0"/></symbol>
   <symbol id="i-stocks" viewBox="0 0 24 24"><path d="M3.5 17.5l5.5-5.5 4 4 7.5-7.5"/><path d="M15 8.5h5.5V14"/></symbol>
+  <symbol id="i-coffee" viewBox="0 0 24 24"><path d="M5 9h11v5a5 5 0 0 1-5 5h-1a5 5 0 0 1-5-5z"/><path d="M16 10.5h1.5a2.5 2.5 0 0 1 0 5H16"/><path d="M8.5 3.5V6M12 3.5V6"/></symbol>
   <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></symbol>
   <symbol id="i-phone" viewBox="0 0 24 24"><rect x="6" y="2.5" width="12" height="19" rx="3"/><path d="M11 18.5h2"/></symbol>
   <symbol id="i-waves" viewBox="0 0 24 24"><circle cx="12" cy="12" r="2"/><path d="M8 8a5.6 5.6 0 0 0 0 8M16 8a5.6 5.6 0 0 1 0 8M5 5a10 10 0 0 0 0 14M19 5a10 10 0 0 1 0 14"/></symbol>
@@ -656,6 +762,10 @@ dialog.more-sheet::backdrop { background: rgba(0, 0, 0, 0.42); -webkit-backdrop-
   <symbol id="i-drop" viewBox="0 0 24 24"><path d="M12 21a6.5 6.5 0 0 0 6.5-6.5c0-3.5-3.2-6.2-6.5-11-3.3 4.8-6.5 7.5-6.5 11A6.5 6.5 0 0 0 12 21Z"/></symbol>
   <symbol id="i-script" viewBox="0 0 24 24"><path d="M4 5.5h16M4 10h11M4 14.5h16M4 19h8"/><path d="M19 9l2 1-2 1z" fill="currentColor"/></symbol>
   <symbol id="i-pill" viewBox="0 0 24 24"><rect x="2.5" y="8" width="19" height="8" rx="4"/></symbol>
+  <symbol id="i-diorama" viewBox="0 0 24 24"><path d="M2.5 13.5 9 8l6.5 5.5M4.5 12v8h9v-8"/><circle cx="18.5" cy="6.5" r="2.5"/></symbol>
+  <!-- The pointing hand over Diorama's glass ball (the film in its sheet draws the same hand): every part outlined
+       in black, then filled white on top, so the outline goes round the whole hand. The fingertip is at (7, 1). -->
+  <symbol id="i-hand" viewBox="0 0 20 24"><g fill="#000" stroke="#000" stroke-width="2" stroke-linejoin="round"><rect x="5.5" y="1" width="3" height="14" rx="1.5"/><rect x="8.5" y="7.6" width="3" height="8" rx="1.5"/><rect x="11.5" y="8.6" width="3" height="8" rx="1.5"/><rect x="14.5" y="10" width="2.8" height="7" rx="1.4"/><path d="M5.5 12.5H17.3V17.2Q17.3 22 12.6 22H10.1Q6.6 22 5.6 18.6L2.4 13.6Q1.7 12.4 2.8 11.8Q3.8 11.3 4.6 12.2L5.5 13.4Z"/></g><g fill="#fff"><rect x="5.5" y="1" width="3" height="14" rx="1.5"/><rect x="8.5" y="7.6" width="3" height="8" rx="1.5"/><rect x="11.5" y="8.6" width="3" height="8" rx="1.5"/><rect x="14.5" y="10" width="2.8" height="7" rx="1.4"/><path d="M5.5 12.5H17.3V17.2Q17.3 22 12.6 22H10.1Q6.6 22 5.6 18.6L2.4 13.6Q1.7 12.4 2.8 11.8Q3.8 11.3 4.6 12.2L5.5 13.4Z"/></g><path d="M8.5 9.8V12.6M11.5 10.6V13.2M14.5 11.8V13.8" fill="none" stroke="#000" stroke-width="0.8" stroke-linecap="round"/></symbol>
   <symbol id="i-laptop" viewBox="0 0 24 24"><path d="M4.5 16V6.5a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2V16M2.5 16h19l-1 3.5h-17z"/><path d="M10.5 4.5h3v1a1 1 0 0 1-1 1h-1a1 1 0 0 1-1-1z"/></symbol>
   <symbol id="i-columns" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M12 4v16M3 9.5h18"/></symbol>
   <symbol id="i-wallet" viewBox="0 0 24 24"><path d="M19 7.5V5a1.5 1.5 0 0 0-1.5-1.5H5.5a2.5 2.5 0 0 0 0 5h14A1.5 1.5 0 0 1 21 10v3h-3.5a2 2 0 0 0 0 4H21v1.5a1.5 1.5 0 0 1-1.5 1.5h-14A2.5 2.5 0 0 1 3 17.5V6"/></symbol>
@@ -691,7 +801,7 @@ dialog.more-sheet::backdrop { background: rgba(0, 0, 0, 0.42); -webkit-backdrop-
     <div class="side-sec">
       <p class="side-group">Overview</p>
       <a class="side-item" href="#top" data-k="home start download hero notch island"><i class="ic" style="--c:#1d1d1f"><svg class="ico"><use href="#i-screen"/></svg></i><span>A living notch</span></a>
-      <a class="side-item" href="#new" data-k="new release 0.2.21 latest changes settings in the island again gear advanced settings window island closes update in version row check now settings window glides smooth motion 144 fps 120 hz promotion slide switches highlight trackpad scroll reduce motion downloader progress youtube puzzle solving meeting notes mac ielts coach speaking band downloader video sound studio pro settings window gear every setting one place sidebar light dark mode mac window title bar meeting notes record call transcript summary action items pro ai tab usage codex claude code opencode go gemini cursor copilot kimi glm minimax openrouter limits plans resets heads-up tabs hide switch off music today shelf tasks focus prayer countdown ok lyrics come back steps two hours ielts notifications whatsapp telegram mac signed developer id notarized checked by apple opens open anyway gone privacy security permissions once more right click menu stays open island stays open always looks for new versions version check now bluetooth pop-ups headphones speakers paired quiet connected disconnected check for updates every hour check now update available stays lyrics bar zen firefox stocks prices fixed getting prices mac updates install in place ihsg idx saham watchlist chart oyenza.trade today five weeks week ahead schedule month grid dots allow turn on prayer times anywhere world city mac youtube spotify browser now playing pill notch oyen oyenza tab system health add-ons clipboard history gone today your day google calendar gmail meeting join flights bills clipboard add-on touch screen tablet taps tap through notch eyes hide and seek macbook camera update available new version install now next start updater mac installer dmg window steps health oyenza sign in mac headphones full screen power island stays maximized windows sing along romaji lyrics mac prayer script reader teleprompter games power"><i class="ic" style="--c:#bf4800"><svg class="ico"><use href="#i-spark"/></svg></i><span>New in 0.2.21</span></a>
+      <a class="side-item" href="#new" data-k="new release 0.2.30 latest changes caffeine coffee kopi espresso americano latte cappuccino flat white mocha es kopi susu shots beans arabica blend robusta decaf kopi tubruk instant sachet filter cold brew tea green tea energy drink cola your own mg last call bedtime sleep reminder half-life day limit 0.2.29 slide the glass ball drag hand day night switch sunset dusk diorama long pill as long as a notch lamp post bushes fence whole island matches frame cream indigo open card notices 0.2.28 prayer times kemenag muhammadiyah khgt kalender hijriah global tunggal hijri date tanggal hijriah majelis tarjih subuh 18 isbat ramadan syawal 0.2.27 diorama fifth look theme pixel art house tree cat sky day night dawn golden hour sunset sunrise moon stars glass ball resting pill see what pro brings studio pro add-ons every pro feature ai usage claude ultra 10x max 20x clearer adzan azan athan adhan prayer times sound recording antigravity agy ai tab mac top bar mydockfinder menu bar over notifications store tabs phone drop double tap zoom move the island drag along the top edge left right side browser tabs out of the way centre center mac macbook notch pill menu bar settings in the island againgear advanced settings window island closes update in version row check now settings window glides smooth motion 144 fps 120 hz promotion slide switches highlight trackpad scroll reduce motion downloader progress youtube puzzle solving meeting notes mac ielts coach speaking band downloader video sound studio pro settings window gear every setting one place sidebar light dark mode mac window title bar meeting notes record call transcript summary action items pro ai tab usage codex claude code opencode go gemini cursor copilot kimi glm minimax openrouter limits plans resets heads-up tabs hide switch off music today shelf tasks focus prayer countdown ok lyrics come back steps two hours ielts notifications whatsapp telegram mac signed developer id notarized checked by apple opens open anyway gone privacy security permissions once more right click menu stays open island stays open always looks for new versions version check now bluetooth pop-ups headphones speakers paired quiet connected disconnected check for updates every hour check now update available stays lyrics bar zen firefox stocks prices fixed getting prices mac updates install in place ihsg idx saham watchlist chart oyenza.trade today five weeks week ahead schedule month grid dots allow turn on prayer times anywhere world city mac youtube spotify browser now playing pill notch oyen oyenza tab system health add-ons clipboard history gone today your day google calendar gmail meeting join flights bills clipboard add-on touch screen tablet taps tap through notch eyes hide and seek macbook camera update available new version install now next start updater mac installer dmg window steps health oyenza sign in mac headphones full screen power island stays maximized windows sing along romaji lyrics mac prayer script reader teleprompter games power"><i class="ic" style="--c:#bf4800"><svg class="ico"><use href="#i-spark"/></svg></i><span>New in 0.2.30</span></a>
       <a class="side-item" href="#highlights" data-k="best gallery overview"><i class="ic" style="--c:#ff9f0a"><svg class="ico"><use href="#i-spark"/></svg></i><span>Highlights</span></a>
       <a class="side-item" href="#features" data-k="rest idle music timer volume charging headphones bluetooth money clock eyes prayer countdown"><i class="ic" style="--c:#636366"><svg class="ico"><use href="#i-island"/></svg></i><span>While it rests</span></a>
     </div>
@@ -700,7 +810,7 @@ dialog.more-sheet::backdrop { background: rgba(0, 0, 0, 0.42); -webkit-backdrop-
       <a class="side-item" href="#music" data-k="music lyrics spotify apple youtube lrclib songs"><i class="ic" style="--c:#ff2d55"><svg class="ico"><use href="#i-music"/></svg></i><span>Music and lyrics</span></a>
       <a class="side-item" href="#read-along" data-k="korean japanese chinese romaji pinyin pronunciation reading kanji"><i class="ic" style="--c:#af52de"><svg class="ico"><use href="#i-lang"/></svg></i><span>Read along</span></a>
       <a class="side-item" href="#focus" data-k="pomodoro timer focus"><i class="ic" style="--c:#5856d6"><svg class="ico"><use href="#i-timer"/></svg></i><span>Focus</span></a>
-      <a class="side-item" href="#ai" data-k="ai usage codex claude code opencode go gemini cli cursor github copilot kimi code z.ai zai glm minimax openrouter oyenza inference limits plan quota credits balance spend resets heads-up notices new"><i class="ic" style="--c:#00c7be"><svg class="ico"><use href="#i-meter"/></svg></i><span>AI usage</span><span class="tag">New</span></a>
+      <a class="side-item" href="#ai" data-k="ai usage codex claude code opencode go gemini cli antigravity agy cursor github copilot kimi code z.ai zai glm minimax openrouter oyenza inference limits plan quota credits balance spend resets heads-up notices pro"><i class="ic" style="--c:#00c7be"><svg class="ico"><use href="#i-meter"/></svg></i><span>AI usage</span><span class="tag">Pro</span></a>
       <a class="side-item" href="#health" data-k="steps health apple health connect add-on"><i class="ic" style="--c:#34c759"><svg class="ico"><use href="#i-steps"/></svg></i><span>Health</span></a>
       <a class="side-item" href="#shelf" data-k="files shelf drag drop"><i class="ic" style="--c:#007aff"><svg class="ico"><use href="#i-tray"/></svg></i><span>Shelf</span></a>
       <a class="side-item" href="#tasks" data-k="todo to-do tasks list"><i class="ic" style="--c:#ff9500"><svg class="ico"><use href="#i-list"/></svg></i><span>Tasks</span></a>
@@ -714,17 +824,19 @@ dialog.more-sheet::backdrop { background: rgba(0, 0, 0, 0.42); -webkit-backdrop-
       <a class="side-item" href="#paired-phones" data-k="paired phones pair any network mobile data share sheet"><i class="ic" style="--c:#30b0c7"><svg class="ico"><use href="#i-waves"/></svg></i><span>Paired phones</span></a>
       <a class="side-item" href="#prayer" data-k="prayer sholat salat adzan kemenag qibla kiblat jadwal islam"><i class="ic" style="--c:#5e5ce6"><svg class="ico"><use href="#i-moon"/></svg></i><span>Prayer times</span></a>
       <a class="side-item" href="#stocks" data-k="stocks ihsg idx saham shares watchlist market prices chart oyenza.trade bursa add-on new"><i class="ic" style="--c:#30d158"><svg class="ico"><use href="#i-stocks"/></svg></i><span>Stocks</span></a>
+      <a class="side-item" href="#caffeine" data-k="caffeine coffee kopi espresso americano latte cappuccino es kopi susu shots beans arabica robusta decaf tea energy drink cola mg last call bedtime sleep reminder limit add-on new"><i class="ic" style="--c:#8a5a36"><svg class="ico"><use href="#i-coffee"/></svg></i><span>Caffeine</span></a>
       <a class="side-item" href="#addons" data-k="add-ons addons download extras plugins"><i class="ic" style="--c:#ff9f0a"><svg class="ico"><use href="#i-addons"/></svg></i><span>Add-ons</span></a>
       <a class="side-item" href="#script" data-k="script reader teleprompter prompter webcam camera read talk video new"><i class="ic" style="--c:#a2845e"><svg class="ico"><use href="#i-script"/></svg></i><span>Script reader</span></a>
       <a class="side-item" href="#games" data-k="games fps gpu cpu overlay gaming frames readout peeks"><i class="ic" style="--c:#ff375f"><svg class="ico"><use href="#i-game"/></svg></i><span>Show over games</span></a>
-      <a class="side-item" href="#on-top" data-k="full screen always on top stay hide maximized windows browser tabs chrome"><i class="ic" style="--c:#32ade6"><svg class="ico"><use href="#i-layers"/></svg></i><span>Stays on top</span></a>
+      <a class="side-item" href="#on-top" data-k="full screen always on top stay hide maximized windows browser tabs chrome move drag island left right side centre center out of the way"><i class="ic" style="--c:#32ade6"><svg class="ico"><use href="#i-layers"/></svg></i><span>Stays on top</span></a>
     </div>
     <div class="side-sec">
       <p class="side-group">Looks</p>
-      <a class="side-item" href="#looks" data-k="themes looks classic colours colors"><i class="ic" style="--c:#bf5af2"><svg class="ico"><use href="#i-palette"/></svg></i><span>Four looks</span></a>
+      <a class="side-item" href="#looks" data-k="themes looks classic oyen glass pill diorama colours colors"><i class="ic" style="--c:#bf5af2"><svg class="ico"><use href="#i-palette"/></svg></i><span>Five looks</span></a>
       <a class="side-item" href="#oyen" data-k="oyen theme cat cream orange"><i class="ic" style="--c:#f0892e"><img src="brand/oyen-mark-white.svg" alt="" width="14" height="14"></i><span>Oyen</span></a>
       <a class="side-item" href="#glass" data-k="glass liquid theme frosted"><i class="ic" style="--c:#64d2ff"><svg class="ico"><use href="#i-drop"/></svg></i><span>Glass</span></a>
       <a class="side-item" href="#pill" data-k="pill capsule floating theme"><i class="ic" style="--c:#1d1d1f"><svg class="ico"><use href="#i-pill"/></svg></i><span>Pill</span></a>
+      <a class="side-item" href="#diorama" data-k="diorama pixel art house tree cat sky day night dawn golden hour sunset sunrise moon stars glass ball slide drag switch long pill notch lamp post whole island cream indigo frame clock theme look"><i class="ic" style="--c:#6f9048"><svg class="ico"><use href="#i-diorama"/></svg></i><span>Diorama</span></a>
     </div>
     <div class="side-sec">
       <p class="side-group">Mac and account</p>
@@ -735,7 +847,7 @@ dialog.more-sheet::backdrop { background: rgba(0, 0, 0, 0.42); -webkit-backdrop-
     <div class="side-sec">
       <p class="side-group">Get it</p>
       <a class="side-item" href="#privacy" data-k="privacy data light fast size open source mit"><i class="ic" style="--c:#007aff"><svg class="ico"><use href="#i-lock"/></svg></i><span>Privacy</span></a>
-      <a class="side-item" href="#pricing" data-k="pricing price prices cost free pro plan subscription monthly yearly trial buy meeting notes notetaker record transcript summary meet zoom teams notifications whatsapp telegram phone link"><i class="ic" style="--c:#34c759"><svg class="ico"><use href="#i-tag"/></svg></i><span>Pricing</span></a>
+      <a class="side-item" href="#pricing" data-k="pricing price prices cost free pro plan subscription monthly yearly trial buy ai usage ielts downloader meeting notes notetaker record transcript summary meet zoom teams notifications whatsapp telegram phone link"><i class="ic" style="--c:#34c759"><svg class="ico"><use href="#i-tag"/></svg></i><span>Pricing</span></a>
       <a class="side-item" href="#get" data-k="install download setup smartscreen dmg get"><i class="ic" style="--c:#0071e3"><svg class="ico"><use href="#i-download"/></svg></i><span>Get Oyenza Studio</span></a>
     </div>
     <p class="side-empty" id="sideEmpty" hidden>No feature by that name. Try "lyrics" or "files".</p>
@@ -790,10 +902,10 @@ dialog.more-sheet::backdrop { background: rgba(0, 0, 0, 0.42); -webkit-backdrop-
           <div class="hero-copy">
             <h1 class="t-hero-eyebrow">Oyenza Studio</h1>
             <p class="t-hero">A living notch.</p>
-            <a class="t-avail" href="#new">New in 0.2.21: Settings opens in the island again, and Advanced settings opens every setting in a window.</a>
+            <a class="t-avail" href="#new">New in 0.2.30: Caffeine. Add what you drink, and see your last call for coffee.</a>
             <div class="buybox">
-              <div><b>Free for Windows and Mac</b><span class="fine">Open source · Windows <span data-release="size">3.2&nbsp;MB</span> · Mac <span data-release="mac-size">5.8&nbsp;MB</span> · <a class="notes" data-release="notes" href="https://github.com/lucacadalora/oyenza-studio/releases/latest">What's new in <span data-release="version">0.2.21</span></a></span></div>
-              <a class="btn dl-primary" href="https://github.com/lucacadalora/oyenza-studio/releases/latest/download/Oyenza-Studio-Setup.exe">Download</a>
+              <div><b>Free for Windows and Mac</b><span class="fine">Open source · Windows <span data-release="size">3.2&nbsp;MB</span> · Mac <span data-release="mac-size">5.9&nbsp;MB</span> · <a class="notes" data-release="notes" href="https://github.com/lucacadalora/oyenza-studio/releases/latest">What's new in <span data-release="version">0.2.30</span></a></span></div>
+              <a class="btn dl-primary" href="https://github.com/lucacadalora/oyenza-studio/releases/latest/download/Oyenza-Studio-Setup.exe"><span class="dl-word">Download</span><span class="send-word">Send to your computer</span></a>
             </div>
             <a class="link hero-other dl-other" data-release="mac-link" href="https://github.com/lucacadalora/oyenza-studio/releases/latest/download/Oyenza-Studio-Mac.dmg">Download for Mac</a>
           </div>
@@ -812,29 +924,29 @@ dialog.more-sheet::backdrop { background: rgba(0, 0, 0, 0.42); -webkit-backdrop-
 
   <section class="sec band" id="new" aria-labelledby="new-title">
     <div class="content head rv">
-      <h2 class="t-l" id="new-title">New in 0.2.21.</h2>
+      <h2 class="t-l" id="new-title">New in 0.2.30.</h2>
       <button class="more" type="button" data-more="m-new">Everything new, release by release<i><svg class="ico"><use href="#i-plus"/></svg></i></button>
     </div>
     <div class="content news">
-      <a class="news-tile shot wide rv" href="#settings">
-        <span class="news-visual top left" aria-hidden="true"><img class="look-classic" src="assets/shots/classic/page-settings.webp" alt="" width="660" height="333" loading="lazy"><img class="look-oyen" src="assets/shots/oyen/page-settings.webp" alt="" width="660" height="333" loading="lazy"></span>
-        <p class="t-card">Settings in the island again</p><p class="t-tile">The gear opens Settings in the island: your account, the theme, the idle look and the switches you use most. Its last row, Advanced settings, opens every setting in a window. On Windows and Mac.</p>
+      <a class="news-tile shot rv" href="#caffeine">
+        <span class="news-visual top left" aria-hidden="true"><img class="look-classic" src="assets/shots/classic/page-caffeine.webp" alt="" width="660" height="335" loading="lazy"><img class="look-oyen" src="assets/shots/oyen/page-caffeine.webp" alt="" width="660" height="335" loading="lazy"></span>
+        <p class="t-card">Caffeine, until bedtime</p><p class="t-tile">Add what you drink, by its shots or by the cup, and see how much caffeine is still in you, hour by hour. Last call is the latest your usual coffee can go in and be mostly gone by bedtime, and the island reminds you before it.</p>
       </a>
-      <a class="news-tile shot rv" href="#settings">
-        <span class="news-visual top left" aria-hidden="true"><img class="look-classic" src="assets/shots/classic/settings-window-appearance.webp" alt="" width="840" height="600" loading="lazy"><img class="look-oyen" src="assets/shots/oyen/settings-window-appearance.webp" alt="" width="840" height="600" loading="lazy"></span>
-        <p class="t-card">Advanced settings that glide</p><p class="t-tile">Every setting in one window, light or dark like your system. Switches slide and highlights glide at your screen's own rate, up to 144 frames a second, on Windows and Mac.</p>
+      <a class="news-tile shot rv" href="#prayer">
+        <span class="news-visual top left" aria-hidden="true"><img class="look-classic" src="assets/shots/classic/page-prayer-muhammadiyah.webp" alt="" width="660" height="225" loading="lazy"><img class="look-oyen" src="assets/shots/oyen/page-prayer-muhammadiyah.webp" alt="" width="660" height="225" loading="lazy"></span>
+        <p class="t-card">Kemenag or Muhammadiyah</p><p class="t-tile">Prayer times can follow Muhammadiyah now: Majelis Tarjih's times and the Kalender Hijriah Global Tunggal (KHGT). Today's Hijri date shows above the arc, by the calendar you pick. Kemenag stays the default.</p>
       </a>
-      <a class="news-tile shot rv" href="#pricing">
-        <span class="news-visual top left" aria-hidden="true"><img class="look-classic" src="assets/shots/mac/classic/page-notes-listening.webp" alt="" width="710" height="320" loading="lazy"><img class="look-oyen" src="assets/shots/mac/oyen/page-notes-listening.webp" alt="" width="710" height="320" loading="lazy"></span>
-        <p class="t-card">Meeting notes on the Mac</p><p class="t-tile">Oyen listens to your call through your Mac's microphone and its own sound, then writes the summary, the decisions and the whole transcript. Studio Pro; the Mac's own sound needs macOS 14.2 or later.</p>
-      </a>
-      <a class="news-tile shot rv" href="#pricing">
-        <span class="news-visual top left" aria-hidden="true"><img class="look-classic" src="assets/shots/mac/classic/page-ielts.webp" alt="" width="710" height="388" loading="lazy"><img class="look-oyen" src="assets/shots/mac/oyen/page-ielts.webp" alt="" width="710" height="388" loading="lazy"></span>
-        <p class="t-card">The IELTS coach</p><p class="t-tile">Oyen asks IELTS Speaking questions out loud, listens to your answers and gives you a band. Studio Pro, now on Windows and Mac.</p>
+      <a class="news-tile shot rv" href="#diorama">
+        <span class="news-visual" aria-hidden="true"><span class="dio-stack"><img src="assets/shots/diorama/dawn.webp" srcset="assets/shots/diorama/dawn.webp 2x, assets/shots/zoom/diorama/dawn.webp 4x" alt="" width="190" height="46" loading="lazy"><img src="assets/shots/diorama/morning.webp" srcset="assets/shots/diorama/morning.webp 2x, assets/shots/zoom/diorama/morning.webp 4x" alt="" width="190" height="46" loading="lazy"><img src="assets/shots/diorama/golden-hour.webp" srcset="assets/shots/diorama/golden-hour.webp 2x, assets/shots/zoom/diorama/golden-hour.webp 4x" alt="" width="190" height="46" loading="lazy"><img src="assets/shots/diorama/night.webp" srcset="assets/shots/diorama/night.webp 2x, assets/shots/zoom/diorama/night.webp 4x" alt="" width="190" height="46" loading="lazy"></span></span>
+        <p class="t-card">Diorama, a fifth look</p><p class="t-tile">The resting pill becomes a small window onto a pixel-art place: a house, a tree and a sky that follows your clock, from dawn through the golden hour to the stars. At sunset a glass ball rolls across, and night falls behind it. On Windows and Mac.</p>
       </a>
       <a class="news-tile shot rv" href="#pricing">
-        <span class="news-visual top left" aria-hidden="true"><img class="look-classic" src="assets/shots/mac/classic/page-downloads.webp" alt="" width="710" height="396" loading="lazy"><img class="look-oyen" src="assets/shots/mac/oyen/page-downloads.webp" alt="" width="710" height="396" loading="lazy"></span>
-        <p class="t-card">The Downloader</p><p class="t-tile">Paste a link, pick Video or Sound, and watch it come in to Downloads and the Shelf. Studio Pro, on Windows and Mac. Only what you have the right to keep.</p>
+        <span class="news-visual top left" aria-hidden="true"><img class="look-classic" src="assets/shots/classic/page-addons-about.webp" alt="" width="660" height="332" loading="lazy"><img class="look-oyen" src="assets/shots/oyen/page-addons-about.webp" alt="" width="660" height="332" loading="lazy"></span>
+        <p class="t-card">See what Pro brings</p><p class="t-tile">The Add-ons tab lists every Pro feature now, and a click says what it does. AI usage is part of Studio Pro from this version, next to Meeting notes, the IELTS coach and the Downloader.</p>
+      </a>
+      <a class="news-tile shot wide rv" href="#diorama">
+        <span class="news-visual" aria-hidden="true"><span class="dio-pair"><img src="assets/shots/diorama/morning.webp" srcset="assets/shots/diorama/morning.webp 1x, assets/shots/zoom/diorama/morning.webp 2x" alt="" width="380" height="92" loading="lazy"><span class="dio-held"><img src="assets/shots/diorama/slide.webp" srcset="assets/shots/diorama/slide.webp 1x, assets/shots/zoom/diorama/slide.webp 2x" alt="" width="380" height="92" loading="lazy"><svg class="dio-hand" viewBox="0 0 20 24"><use href="#i-hand"/></svg></span></span></span>
+        <p class="t-card">Slide the glass ball</p><p class="t-tile">Press Diorama's glass ball and slide it, like a day and night switch: the place runs on with it, through the golden hour and the sunset into the night. The pill is as long as a notch now, and the whole island wears its frame, cream by day and indigo at night.</p>
       </a>
     </div>
   </section>
@@ -878,13 +990,13 @@ dialog.more-sheet::backdrop { background: rgba(0, 0, 0, 0.42); -webkit-backdrop-
         </div>
       </a>
       <a class="gcard" href="#looks">
-        <p>Four looks: Classic, Oyen, Glass and Pill.</p>
-        <div class="gsky pad"><img class="whole" src="brand/readme/themes.webp" alt="The Music page in each look: Classic, Oyen, Glass light, Glass dark, Pill, and Pill while a lyric line plays" width="880" height="548" loading="lazy"></div>
+        <p>Five looks: Classic, Oyen, Glass, Pill and Diorama.</p>
+        <div class="gsky pad"><img class="whole" src="brand/readme/themes.webp" alt="The Music page in each look: Classic, Oyen, Glass light, Glass dark, Pill, and Pill while a lyric line plays; below them, Diorama's resting pill by day and at night" width="880" height="703" loading="lazy"></div>
       </a>
       <a class="gcard" href="#prayer">
         <p>Prayer times for your kab/kota, or any city in the world.</p>
         <div class="gsky"><div class="sky-fill"></div>
-          <img class="look-classic" src="assets/shots/classic/page-prayer.webp" alt="The Prayer page: Ashar at 14:52, counting down from 00:08:00, Kota Jakarta, today's five prayers on an arc with Ashar lit, Imsak, Terbit and the qibla, and Adzan, Tone or Silent" width="660" height="225" loading="lazy">
+          <img class="look-classic" src="assets/shots/classic/page-prayer.webp" alt="The Prayer page: Ashar at 14:59, counting down from 00:08:00, Kota Jakarta, today's five prayers on an arc with Ashar lit, the Hijri date, Imsak, Terbit and the qibla, and Adzan, Tone or Silent" width="660" height="225" loading="lazy">
           <img class="look-oyen" src="assets/shots/oyen/page-prayer.webp" alt="The Prayer page in the Oyen theme" width="660" height="225" loading="lazy">
         </div>
       </a>
@@ -1054,7 +1166,7 @@ dialog.more-sheet::backdrop { background: rgba(0, 0, 0, 0.42); -webkit-backdrop-
   <!-- The AI tab, right after Focus in the island's row of tabs. -->
   <section class="sec" id="ai" aria-labelledby="ai-title">
     <div class="content head rv">
-      <p class="t-label new">New in 0.2.16</p>
+      <p class="t-label new">Studio Pro</p>
       <h3 class="t-l" id="ai-title">Your AI limits, before you hit them.</h3>
       <p class="t-intro"><b>Codex, Claude Code, OpenCode Go</b> and more: what's left of each plan, and when it resets.</p>
       <button class="more" type="button" data-more="m-ai">More about AI usage<i><svg class="ico"><use href="#i-plus"/></svg></i></button>
@@ -1173,14 +1285,14 @@ dialog.more-sheet::backdrop { background: rgba(0, 0, 0, 0.42); -webkit-backdrop-
     <div class="content head rv">
       <p class="t-label">Prayer times</p>
       <h3 class="t-l" id="prayer-title">Prayer times, for your city.</h3>
-      <p class="t-intro">As <b>Kemenag RI</b> publishes them, with a live countdown, today on one arc, the qibla and the adzan. New in 0.2.3: on the Mac too.</p>
+      <p class="t-intro">As <b>Kemenag RI</b> publishes them, or as <b>Muhammadiyah</b> does, with a live countdown, today on one arc, the Hijri date, the qibla and the adzan, on Windows and Mac. New in 0.2.28: Muhammadiyah's times and the KHGT calendar.</p>
       <button class="more" type="button" data-more="m-prayer">More about prayer times<i><svg class="ico"><use href="#i-plus"/></svg></i></button>
     </div>
     <div class="content">
       <div class="panel rv-zoom" data-scene="par">
         <div class="sky-layer"></div>
         <div class="isl">
-          <img class="look-classic" src="assets/shots/classic/page-prayer.webp" alt="The Prayer page: Ashar at 14:52, counting down from 00:08:00, Kota Jakarta, today's five prayers on an arc with Ashar lit, Imsak, Terbit and the qibla, and Adzan, Tone or Silent" width="660" height="225" loading="lazy">
+          <img class="look-classic" src="assets/shots/classic/page-prayer.webp" alt="The Prayer page: Ashar at 14:59, counting down from 00:08:00, Kota Jakarta, today's five prayers on an arc with Ashar lit, the Hijri date, Imsak, Terbit and the qibla, and Adzan, Tone or Silent" width="660" height="225" loading="lazy">
           <img class="look-oyen" src="assets/shots/oyen/page-prayer.webp" alt="The Prayer page in the Oyen theme" width="660" height="225" loading="lazy">
         </div>
         <img class="pose left" src="brand/art/poses/oyen-prayer.webp" alt="Oyen holding a lantern" width="480" height="562" loading="lazy">
@@ -1188,7 +1300,7 @@ dialog.more-sheet::backdrop { background: rgba(0, 0, 0, 0.42); -webkit-backdrop-
       <div class="stats">
         <div class="stat rv"><small>Picks from</small><b>517</b><span>Kemenag places, the nearest one found for you.</span></div>
         <div class="stat rv"><small>Matches</small><b>98.2%</b><span>of 227,367 times in Kemenag's 2026 schedule, to the minute.</span></div>
-        <div class="stat rv"><small>An add-on of</small><b>1.9&nbsp;MB</b><span>downloaded only when you switch it on.</span></div>
+        <div class="stat rv"><small>An add-on of</small><b>959&nbsp;KB</b><span>downloaded only when you switch it on.</span></div>
       </div>
     </div>
   </section>
@@ -1212,22 +1324,44 @@ dialog.more-sheet::backdrop { background: rgba(0, 0, 0, 0.42); -webkit-backdrop-
     </div>
   </section>
 
+  <section class="sec" id="caffeine" aria-labelledby="caffeine-title">
+    <div class="content head rv">
+      <p class="t-label new">New in 0.2.30</p>
+      <h3 class="t-l" id="caffeine-title">Caffeine, until bedtime.</h3>
+      <p class="t-intro">Add what you drink, by its shots or by the cup, and see <b>how much is still in you</b>, hour by hour. Last call is the latest your usual coffee can go in and leave at most 35&nbsp;mg at bedtime, and the island reminds you 30 minutes before it.</p>
+    </div>
+    <div class="content">
+      <div class="panel rv-zoom" data-scene="par" style="--band:28px">
+        <div class="sky-layer"></div>
+        <div class="isl">
+          <img class="look-classic" src="assets/shots/classic/page-caffeine.webp" alt="The Caffeine page: the day's drinks and caffeine against the day's limit and its last call, over a field of dots from 06:00 to 06:00 with the peak and what's left at bedtime marked and each drink a dot under it, and the day's drinks listed on the right" width="660" height="335" loading="lazy">
+          <img class="look-oyen" src="assets/shots/oyen/page-caffeine.webp" alt="The Caffeine page in the Oyen theme" width="660" height="335" loading="lazy">
+        </div>
+      </div>
+      <div class="stats">
+        <div class="stat rv"><small>A shot of arabica</small><b>75&nbsp;mg</b><span>as Starbucks publishes it. Blend 105, robusta 120, decaf 15. The shots are yours to enter.</span></div>
+        <div class="stat rv"><small>Last call leaves</small><b>35&nbsp;mg</b><span>at most at bedtime, after a 2023 review of 24 studies of caffeine and sleep.</span></div>
+        <div class="stat rv"><small>An add-on</small><b>Built&nbsp;in</b><span>Nothing to download, nothing sent. Off, there's no Caffeine tab at all.</span></div>
+      </div>
+    </div>
+  </section>
+
   <section class="sec" id="addons" aria-labelledby="addons-title">
     <div class="content split">
       <div class="head rv">
         <p class="t-label">Add-ons</p>
         <h3 class="t-l" id="addons-title">Download only what you use.</h3>
-        <p class="t-intro">Each stays off until you switch it on. Downloads are <b>checked against a fingerprint</b> built into the app.</p>
+        <p class="t-intro">Each stays off until you switch it on. Downloads are <b>checked against a fingerprint</b> built into the app. Without Pro, a Pro add-on says what it does instead.</p>
         <div class="stats three">
-          <div class="stat"><b>1.9&nbsp;MB</b><span>Prayer times</span></div>
+          <div class="stat"><b>959&nbsp;KB</b><span>Prayer times</span></div>
           <div class="stat"><b>3.8&nbsp;MB</b><span>Japanese readings</span></div>
-          <div class="stat"><b>Built&nbsp;in</b><span>Script reader, System, Health and Stocks</span></div>
+          <div class="stat"><b>Built&nbsp;in</b><span>Script reader, System, Health, Stocks and Caffeine</span></div>
         </div>
       </div>
       <div class="panel rv-zoom" data-scene="par" style="--band:28px">
         <div class="sky-layer"></div>
         <div class="isl">
-          <img class="look-classic" src="assets/shots/classic/page-addons.webp" alt="The Add-ons tab, a line each: Prayer times (1.9 MB), Japanese readings (3.8 MB), Script reader, System, Health, Stocks, Notifications and IELTS (built in) and Meeting notes (Pro), each with its switch off" width="660" height="332" loading="lazy">
+          <img class="look-classic" src="assets/shots/classic/page-addons.webp" alt="The Add-ons tab, a line each: Prayer times (959 KB), Japanese readings (3.8 MB), Script reader, System, Health, Stocks and Caffeine (built in), each with its switch off, then AI usage, Meeting notes and IELTS, each marked Pro with a plus that says what it does" width="660" height="332" loading="lazy">
           <img class="look-oyen" src="assets/shots/oyen/page-addons.webp" alt="The Add-ons tab in the Oyen theme" width="660" height="332" loading="lazy">
         </div>
       </div>
@@ -1290,14 +1424,14 @@ dialog.more-sheet::backdrop { background: rgba(0, 0, 0, 0.42); -webkit-backdrop-
       <div class="head rv">
         <p class="t-label">Stays on top</p>
         <h3 class="t-l" id="ontop-title">Above every window.</h3>
-        <p class="t-intro">In full-screen games and videos, <b>you choose</b>: hide it, or keep it on top. Over maximized windows it stays where you can see it.</p>
+        <p class="t-intro">In full-screen games and videos, <b>you choose</b>: hide it, or keep it on top. Over maximized windows it stays where you can see it. Press it and drag it along the top edge, out of your browser's tabs: on Windows, and new in 0.2.23, on a Mac.</p>
       </div>
     </div>
   </section>
 
   <section class="sec" id="looks" aria-labelledby="looks-title">
     <div class="content head center rv">
-      <h2 class="t-xl" id="looks-title">Four looks.<br>One island.</h2>
+      <h2 class="t-xl" id="looks-title">Five looks.<br>One island.</h2>
       <p class="t-intro">Classic is black and quiet. Pick another look any time.</p>
     </div>
     <div class="content">
@@ -1306,12 +1440,14 @@ dialog.more-sheet::backdrop { background: rgba(0, 0, 0, 0.42); -webkit-backdrop-
         <div class="lk" data-k="oyen"><div class="sky-fill"></div><div class="isl"><img src="assets/shots/oyen/page-media.webp" alt="Oyen: the cream island with brown type and Oyen's orange, open on the Music page" width="660" height="227" loading="lazy"></div></div>
         <div class="lk" data-k="glass"><img class="lk-whole" src="assets/shots/glass/light-page-media.webp" alt="Glass: the Music page as frosted glass over a bright web page, which bends at the rim" width="756" height="267" loading="lazy"></div>
         <div class="lk" data-k="pill"><div class="sky-fill"></div><div class="isl float"><img src="assets/shots/pill/page-media.webp" alt="Pill: a black card with four rounded corners floating below the top edge, on the Music page" width="620" height="224" loading="lazy"></div></div>
+        <div class="lk" data-k="diorama"><div class="sky-fill"></div><div class="isl dio-look"><img src="assets/shots/zoom/diorama/morning.webp" alt="Diorama: the resting pill as a long, small window in a cream frame, with a pixel-art house under a glass ball, 10:08 written in a blue sky, a fence, a lamp post, a cat and a tree" width="760" height="184" loading="lazy"></div></div>
       </div>
       <div class="swatches" role="radiogroup" aria-label="Look">
         <button class="sw" type="button" role="radio" aria-checked="true" data-k="classic"><i class="sw-classic"></i>Classic</button>
         <button class="sw" type="button" role="radio" aria-checked="false" data-k="oyen"><i class="sw-oyen"></i>Oyen</button>
         <button class="sw" type="button" role="radio" aria-checked="false" data-k="glass"><i class="sw-glass"></i>Glass</button>
         <button class="sw" type="button" role="radio" aria-checked="false" data-k="pill"><i class="sw-pill"></i>Pill</button>
+        <button class="sw" type="button" role="radio" aria-checked="false" data-k="diorama"><i class="sw-diorama"></i>Diorama</button>
       </div>
       <p class="look-cap t-tile" id="lookCap" aria-live="polite"><b>Classic.</b> Black and quiet, the default look.</p>
     </div>
@@ -1401,6 +1537,58 @@ dialog.more-sheet::backdrop { background: rgba(0, 0, 0, 0.42); -webkit-backdrop-
     </div>
   </section>
 
+  <section class="sec" id="diorama" aria-labelledby="diorama-title">
+    <div class="content head rv">
+      <p class="t-label">Diorama</p>
+      <h2 class="t-l" id="diorama-title">A little place that keeps your day.</h2>
+      <p class="t-intro">The resting pill becomes a window onto a pixel-art house and tree, as long as a notch. <b>Its sky follows your clock.</b> New in 0.2.29: slide the glass ball, and the whole island matches.</p>
+      <button class="more" type="button" data-more="m-diorama">More about Diorama<i><svg class="ico"><use href="#i-plus"/></svg></i></button>
+    </div>
+    <div class="content">
+      <div class="duo">
+        <figure class="shot-card rv">
+          <div class="strip dio-strip"><div class="sky-fill"></div><div class="isl"><img src="assets/shots/diorama/morning.webp" srcset="assets/shots/diorama/morning.webp 1x, assets/shots/zoom/diorama/morning.webp 2x" alt="The Diorama pill by day, as long as a notch: a cream frame around a house under a glass ball, 10:08 written in a blue sky, a fence, a lamp post, a cat and a tree" width="380" height="92" loading="lazy"></div></div>
+          <figcaption class="t-tile"><b>Day.</b> The sun crosses the sky, and the cat sits under the tree.</figcaption>
+        </figure>
+        <figure class="shot-card rv">
+          <div class="strip dio-strip"><div class="sky-fill"></div><div class="isl"><img src="assets/shots/diorama/night.webp" srcset="assets/shots/diorama/night.webp 1x, assets/shots/zoom/diorama/night.webp 2x" alt="The Diorama pill at 21:30: an indigo frame, the glass ball over the tree, stars, the moon, a lit window and the lamp post lit" width="380" height="92" loading="lazy"></div></div>
+          <figcaption class="t-tile"><b>Night.</b> The moon in tonight's phase, a lit window and the lamp.</figcaption>
+        </figure>
+      </div>
+      <div class="duo gap-t">
+        <figure class="shot-card rv">
+          <div class="strip dio-strip"><div class="sky-fill"></div><div class="isl"><img src="assets/shots/diorama/golden-hour.webp" srcset="assets/shots/diorama/golden-hour.webp 1x, assets/shots/zoom/diorama/golden-hour.webp 2x" alt="The Diorama pill at 17:40: the sky and the tree turn golden, and the sun is low beside the tree" width="380" height="92" loading="lazy"></div></div>
+          <figcaption class="t-tile"><b>Golden hour.</b> The light turns before sunset.</figcaption>
+        </figure>
+        <figure class="shot-card rv">
+          <div class="strip dio-strip"><div class="sky-fill"></div><div class="isl"><span class="dio-held"><img src="assets/shots/diorama/slide.webp" srcset="assets/shots/diorama/slide.webp 1x, assets/shots/zoom/diorama/slide.webp 2x" alt="A hand holds the glass ball halfway along the pill at 10:08: the place has run on to the sunset, under a golden sky, and the ball magnifies the time" width="380" height="92" loading="lazy"><svg class="dio-hand" viewBox="0 0 20 24" aria-hidden="true"><use href="#i-hand"/></svg></span></div></div>
+          <figcaption class="t-tile"><b>Slide it.</b> Press the ball, and the day runs on into the night.</figcaption>
+        </figure>
+      </div>
+      <!-- A whole day. The four pictures above are the self-test's (tools/site_shots.py DIR diorama); these eight
+           are painted by the crate's own example (cargo run -p studio-diorama --example sheet -- DIR 2 day=9798, and 4
+           for zoom/), which paints the very pixels the app draws, and cut to the same outline with the same gap above. -->
+      <figure class="shot-card rv gap-t">
+        <div class="strip tall"><div class="sky-fill"></div><div class="dio-day"><img src="assets/shots/diorama/day-0600.webp" srcset="assets/shots/diorama/day-0600.webp 1x, assets/shots/zoom/diorama/day-0600.webp 2x" alt="06:00, dawn: a pink sky and a lit window" width="380" height="92" loading="lazy"><img src="assets/shots/diorama/day-0700.webp" srcset="assets/shots/diorama/day-0700.webp 1x, assets/shots/zoom/diorama/day-0700.webp 2x" alt="07:00: a blue sky, and the cat on its way to the tree" width="380" height="92" loading="lazy"><img src="assets/shots/diorama/day-1200.webp" srcset="assets/shots/diorama/day-1200.webp 1x, assets/shots/zoom/diorama/day-1200.webp 2x" alt="12:00, noon: the sun is high and the cat naps under the tree" width="380" height="92" loading="lazy"><img src="assets/shots/diorama/day-1759.webp" srcset="assets/shots/diorama/day-1759.webp 1x, assets/shots/zoom/diorama/day-1759.webp 2x" alt="17:59: a golden sky, the sun low on the right" width="380" height="92" loading="lazy"><img src="assets/shots/diorama/day-1800.webp" srcset="assets/shots/diorama/day-1800.webp 1x, assets/shots/zoom/diorama/day-1800.webp 2x" alt="18:00, sunset: the glass ball rolls across the middle, and the day and the night show through each other" width="380" height="92" loading="lazy"><img src="assets/shots/diorama/day-1815.webp" srcset="assets/shots/diorama/day-1815.webp 1x, assets/shots/zoom/diorama/day-1815.webp 2x" alt="18:15, dusk: an indigo frame, a purple and orange sky, the ball over the tree and the lamp lit" width="380" height="92" loading="lazy"><img src="assets/shots/diorama/day-2359.webp" srcset="assets/shots/diorama/day-2359.webp 1x, assets/shots/zoom/diorama/day-2359.webp 2x" alt="23:59: night, with the window still lit" width="380" height="92" loading="lazy"><img src="assets/shots/diorama/day-0000.webp" srcset="assets/shots/diorama/day-0000.webp 1x, assets/shots/zoom/diorama/day-0000.webp 2x" alt="00:00: the window is dark, and the lamp still lit" width="380" height="92" loading="lazy"></div></div>
+        <figcaption class="t-tile"><b>A whole day.</b> Dawn, the cat heading out, noon, the last golden minute, the ball rolling at sunset, dusk, and lights out at midnight.</figcaption>
+      </figure>
+      <!-- The rest of the island, from a whole Diorama run held at 10:08 and one held at 21:30
+           (tools/site_shots.py DIR diorama day, and ... diorama night). -->
+      <div class="duo gap-t">
+        <figure class="card dio-island rv">
+          <div class="strip tall"><div class="sky-fill"></div><div class="isl"><img src="assets/shots/diorama/page-media-day.webp" alt="The open island in Diorama by day: the Music page in a cream card with a raised frame and slate type, with the album art, the controls and the synced lyrics" width="620" height="224" loading="lazy"></div></div>
+          <div class="strip dio-pills"><div class="sky-fill"></div><img src="assets/shots/diorama/media-activity-day.webp" alt="The music pill by day, with the line being sung, in the same cream frame" width="312" height="40" loading="lazy"><img src="assets/shots/diorama/health-notice-day.webp" alt="A notice by day: 8,412 steps today, daily step goal reached" width="200" height="56" loading="lazy"></div>
+          <figcaption class="t-tile"><b>The whole island, by day.</b> Cream, with slate ink.</figcaption>
+        </figure>
+        <figure class="card dio-island rv">
+          <div class="strip tall"><div class="sky-fill"></div><div class="isl"><img src="assets/shots/diorama/page-media-night.webp" alt="The open island in Diorama at night: the Music page in an indigo card with cream type and the controls" width="620" height="224" loading="lazy"></div></div>
+          <div class="strip dio-pills"><div class="sky-fill"></div><img src="assets/shots/diorama/media-activity-night.webp" alt="The music pill at night, in indigo with cream type" width="312" height="40" loading="lazy"><img src="assets/shots/diorama/health-notice-night.webp" alt="The same notice at night" width="200" height="56" loading="lazy"></div>
+          <figcaption class="t-tile"><b>At night.</b> Indigo, with cream ink and the window's gold.</figcaption>
+        </figure>
+      </div>
+    </div>
+  </section>
+
   <section class="sec band" id="mac" aria-labelledby="mac-title">
     <div class="content head rv">
       <p class="t-label">Mac</p>
@@ -1468,12 +1656,13 @@ dialog.more-sheet::backdrop { background: rgba(0, 0, 0, 0.42); -webkit-backdrop-
           <tr><th scope="row">Music, with synced lyrics</th><td class="c yes"><svg viewBox="0 0 24 24" role="img" aria-label="Yes"><use href="#i-check"/></svg></td><td class="c yes"><svg viewBox="0 0 24 24" role="img" aria-label="Yes"><use href="#i-check"/></svg></td></tr>
           <tr><th scope="row">Readings under Korean, Japanese and Chinese lines</th><td class="c yes"><svg viewBox="0 0 24 24" role="img" aria-label="Yes"><use href="#i-check"/></svg></td><td class="c yes"><svg viewBox="0 0 24 24" role="img" aria-label="Yes"><use href="#i-check"/></svg></td></tr>
           <tr><th scope="row">Focus timer and tasks</th><td class="c yes"><svg viewBox="0 0 24 24" role="img" aria-label="Yes"><use href="#i-check"/></svg></td><td class="c yes"><svg viewBox="0 0 24 24" role="img" aria-label="Yes"><use href="#i-check"/></svg></td></tr>
-          <tr><th scope="row">AI usage, with heads-up notices</th><td class="c yes"><svg viewBox="0 0 24 24" role="img" aria-label="Yes"><use href="#i-check"/></svg></td><td class="c yes"><svg viewBox="0 0 24 24" role="img" aria-label="Yes"><use href="#i-check"/></svg></td></tr>
+          <tr><th scope="row">AI usage, with heads-up notices (Pro)</th><td class="c yes"><svg viewBox="0 0 24 24" role="img" aria-label="Yes"><use href="#i-check"/></svg></td><td class="c yes"><svg viewBox="0 0 24 24" role="img" aria-label="Yes"><use href="#i-check"/></svg></td></tr>
           <tr><th scope="row">Shelf, with Phone drop over the same Wi-Fi</th><td class="c yes"><svg viewBox="0 0 24 24" role="img" aria-label="Yes"><use href="#i-check"/></svg></td><td class="c yes"><svg viewBox="0 0 24 24" role="img" aria-label="Yes"><use href="#i-check"/></svg></td></tr>
           <tr><th scope="row">System page, an add-on</th><td class="c yes"><svg viewBox="0 0 24 24" role="img" aria-label="Yes"><use href="#i-check"/></svg></td><td class="c yes"><svg viewBox="0 0 24 24" role="img" aria-label="Yes"><use href="#i-check"/></svg></td></tr>
           <tr><th scope="row">Stocks, an add-on</th><td class="c yes"><svg viewBox="0 0 24 24" role="img" aria-label="Yes"><use href="#i-check"/></svg></td><td class="c yes"><svg viewBox="0 0 24 24" role="img" aria-label="Yes"><use href="#i-check"/></svg></td></tr>
+          <tr><th scope="row">Caffeine, an add-on</th><td class="c yes"><svg viewBox="0 0 24 24" role="img" aria-label="Yes"><use href="#i-check"/></svg></td><td class="c yes"><svg viewBox="0 0 24 24" role="img" aria-label="Yes"><use href="#i-check"/></svg></td></tr>
           <tr><th scope="row">Volume and charging pop-ups</th><td class="c yes"><svg viewBox="0 0 24 24" role="img" aria-label="Yes"><use href="#i-check"/></svg></td><td class="c yes"><svg viewBox="0 0 24 24" role="img" aria-label="Yes"><use href="#i-check"/></svg></td></tr>
-          <tr><th scope="row">Classic, Oyen, Glass and Pill</th><td class="c yes"><svg viewBox="0 0 24 24" role="img" aria-label="Yes"><use href="#i-check"/></svg></td><td class="c yes"><svg viewBox="0 0 24 24" role="img" aria-label="Yes"><use href="#i-check"/></svg></td></tr>
+          <tr><th scope="row">Classic, Oyen, Glass, Pill and Diorama</th><td class="c yes"><svg viewBox="0 0 24 24" role="img" aria-label="Yes"><use href="#i-check"/></svg></td><td class="c yes"><svg viewBox="0 0 24 24" role="img" aria-label="Yes"><use href="#i-check"/></svg></td></tr>
           <tr><th scope="row">Paired phones, from any network</th><td class="c yes"><svg viewBox="0 0 24 24" role="img" aria-label="Yes"><use href="#i-check"/></svg></td><td class="c no">Not yet</td></tr>
           <tr><th scope="row">Oyenza sign-in</th><td class="c yes"><svg viewBox="0 0 24 24" role="img" aria-label="Yes"><use href="#i-check"/></svg></td><td class="c yes"><svg viewBox="0 0 24 24" role="img" aria-label="Yes"><use href="#i-check"/></svg></td></tr>
           <tr><th scope="row">Script reader</th><td class="c yes"><svg viewBox="0 0 24 24" role="img" aria-label="Yes"><use href="#i-check"/></svg></td><td class="c yes"><svg viewBox="0 0 24 24" role="img" aria-label="Yes"><use href="#i-check"/></svg></td></tr>
@@ -1539,18 +1728,18 @@ dialog.more-sheet::backdrop { background: rgba(0, 0, 0, 0.42); -webkit-backdrop-
   <section class="sec" id="pricing" aria-labelledby="pricing-title">
     <div class="content head center rv">
       <h2 class="t-l" id="pricing-title">Studio is free. Pro is on its way.</h2>
-      <p class="t-intro">Everything else Studio does stays free, with no account. <b>Pro brings Meeting notes, the IELTS coach and the Downloader,</b> for $2.99 a month or $12 a year.</p>
+      <p class="t-intro">Everything else Studio does stays free, with no account. <b>Pro brings AI usage, Meeting notes, the IELTS coach and the Downloader,</b> for $2.99 a month or $12 a year.</p>
     </div>
     <div class="content price-cards">
       <article class="price-card rv" aria-labelledby="price-free-title">
         <h3 class="t-card" id="price-free-title">Free</h3>
         <p class="price"><b>$0</b></p>
-        <p class="t-tile">Everything Studio does today, on Windows and Mac. <b>No account needed.</b> Free and open source.</p>
+        <p class="t-tile">Everything outside Pro, on Windows and Mac. <b>No account needed.</b> Free and open source.</p>
         <ul class="price-list t-tile">
           <li><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg><span>Music with synced lyrics, and Read along</span></li>
           <li><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg><span>Focus, Tasks, the Shelf and Phone drop</span></li>
-          <li><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg><span>Today, System, Prayer times and Stocks</span></li>
-          <li><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg><span>The Classic, Oyen, Glass and Pill looks</span></li>
+          <li><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg><span>Today, System, Prayer times, Stocks and Caffeine</span></li>
+          <li><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg><span>The Classic, Oyen, Glass, Pill and Diorama looks</span></li>
           <li><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg><span>WhatsApp and Telegram on the island, on Windows <span class="soon">Soon</span></span></li>
         </ul>
         <a class="btn" href="#get">Download free</a>
@@ -1563,10 +1752,13 @@ dialog.more-sheet::backdrop { background: rgba(0, 0, 0, 0.42); -webkit-backdrop-
           <img class="look-classic" src="assets/shots/classic/notes-activity.webp" alt="Oyen listening on the closed island: the red dot and 12:34 of the meeting so far" width="139" height="32" loading="lazy">
           <img class="look-oyen" src="assets/shots/oyen/notes-activity.webp" alt="Oyen listening to a meeting on the closed island, in the Oyen theme" width="139" height="32" loading="lazy">
         </div></div>
+        <ul class="pro-feats t-tile" aria-label="What Pro brings. Each opens what it does.">
+          <li><button class="pro-feat" type="button" data-more="m-ai"><span><b>AI usage</b>Track your AI usage: what's left of each plan, and when it resets.</span><i><svg class="ico" aria-hidden="true"><use href="#i-plus"/></svg></i></button></li>
+          <li><button class="pro-feat" type="button" data-more="m-notes"><span><b>Meeting notes</b>One click, and Oyen listens to your call, with no bot joining, then writes it up.</span><i><svg class="ico" aria-hidden="true"><use href="#i-plus"/></svg></i></button></li>
+          <li><button class="pro-feat" type="button" data-more="m-ielts"><span><b>The IELTS coach</b>Oyen asks IELTS Speaking questions out loud and gives you a band.</span><i><svg class="ico" aria-hidden="true"><use href="#i-plus"/></svg></i></button></li>
+          <li><button class="pro-feat" type="button" data-more="m-downloader"><span><b>The Downloader</b>Paste a link and save its video or sound.</span><i><svg class="ico" aria-hidden="true"><use href="#i-plus"/></svg></i></button></li>
+        </ul>
         <ul class="price-list t-tile">
-          <li><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg><span><b>Meeting notes:</b> one click, and Oyen listens to your call in Meet, Zoom, Teams or WhatsApp, with no bot joining, then writes up the summary, the decisions and who does what, with the whole transcript.</span></li>
-          <li><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg><span><b>The IELTS coach:</b> Oyen asks IELTS Speaking questions out loud, listens to your answers and gives you a band.</span></li>
-          <li><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg><span><b>The Downloader:</b> paste a link and save its video or sound. Only what you have the right to keep.</span></li>
           <li><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg><span><b>Your recordings go to Oyenza's server</b> to be written up or scored, and are deleted once that's done.</span></li>
           <li><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg><span><b>Up to 3 computers</b> on one Oyenza account.</span></li>
         </ul>
@@ -1576,7 +1768,7 @@ dialog.more-sheet::backdrop { background: rgba(0, 0, 0, 0.42); -webkit-backdrop-
     <div class="content facts price-facts">
       <div class="fact rv"><h3 class="t-card" style="font-size:21px;line-height:1.19">Try Pro for 7 days.</h3><p class="t-tile">Free, and no card. The 7 days start the first time you switch on Pro.</p></div>
       <div class="fact rv"><h3 class="t-card" style="font-size:21px;line-height:1.19">No license key.</h3><p class="t-tile">Pro comes with your Oyenza account. Sign in with a code, like on a TV. Making an account is free.</p></div>
-      <div class="fact rv"><h3 class="t-card" style="font-size:21px;line-height:1.19">Free stays free.</h3><p class="t-tile">If Pro ends, only Meeting notes, IELTS and the Downloader stop. The notes and files you made stay on your computer, and everything else keeps working.</p></div>
+      <div class="fact rv"><h3 class="t-card" style="font-size:21px;line-height:1.19">Free stays free.</h3><p class="t-tile">If Pro ends, only AI usage, Meeting notes, IELTS and the Downloader stop. The notes and files you made stay on your computer, and everything else keeps working.</p></div>
     </div>
   </section>
 
@@ -1585,6 +1777,22 @@ dialog.more-sheet::backdrop { background: rgba(0, 0, 0, 0.42); -webkit-backdrop-
     <div class="content head center rv">
       <h2 class="t-l" id="get-title">Get Oyenza Studio.</h2>
       <p class="t-intro">Free and open source. Coming from Oyen Poni? <b>Updating keeps your settings.</b></p>
+      <p class="t-intro sent-note" hidden>Sent from your phone. Pick your computer below.</p>
+    </div>
+    <div class="content send-wrap">
+      <article class="os-card send-card" id="send">
+        <svg class="ico"><use href="#i-laptop"/></svg>
+        <h3 class="t-card">Send it to your computer</h3>
+        <p class="t-tile">Studio runs on Windows and Mac, not on phones. Send yourself the link, then open it on your computer.</p>
+        <button class="btn" type="button" data-send="share" data-tap="send-pc:share" hidden>Share the link</button>
+        <p class="send-alt">
+          <a class="link" data-send="whatsapp" data-tap="send-pc:whatsapp" href="https://wa.me/?text=Oyenza%20Studio%20for%20my%20computer%3A%20https%3A%2F%2Fstudio.oyenza.com%2F%3Futm_content%3Dsend-to-pc%23get">WhatsApp it to me</a>
+          <a class="link" data-send="email" data-tap="send-pc:email" href="mailto:?subject=Oyenza%20Studio%20for%20my%20computer&amp;body=Open%20this%20on%20your%20computer%20to%20get%20Oyenza%20Studio%3A%20https%3A%2F%2Fstudio.oyenza.com%2F%3Futm_content%3Dsend-to-pc%23get">Email it to me</a>
+          <button class="link" type="button" data-send="copy" data-tap="send-pc:copy">Copy link</button>
+        </p>
+        <input class="send-url" id="send-url" type="text" readonly aria-label="The link to open on your computer" hidden>
+        <p class="t-tile send-or">Or type <b>studio.oyenza.com</b> on your computer.</p>
+      </article>
     </div>
     <div class="content os-cards">
       <article class="os-card rv">
@@ -1642,15 +1850,17 @@ dialog.more-sheet::backdrop { background: rgba(0, 0, 0, 0.42); -webkit-backdrop-
 <dialog class="more-sheet" id="m-ai" aria-labelledby="m-ai-t">
   <form method="dialog"><button class="sheet-x" aria-label="Close"><svg class="ico"><use href="#i-x"/></svg></button></form>
   <div class="sheet-body">
-    <p class="t-label new">New in 0.2.16 · Windows and Mac</p>
+    <p class="t-label new">Studio Pro · Windows and Mac</p>
     <h2 class="t-m" id="m-ai-t">Your AI limits, before you hit them.</h2>
-    <p>The AI tab sits right after Focus. <b>Each AI service on your computer gets a card:</b> your plan, each limit as a bar with when it resets, credits or balance left, and today's spend where the service tells it. Services it doesn't find stay off the list. Under Services, hide any of them, or add one with its key.</p>
+    <div class="sheet-shot"><div class="sky-fill"></div><div class="isl"><img class="look-classic" src="assets/shots/classic/page-ai.webp" alt="The AI tab: a card for each AI service, with each limit as a bar" width="660" height="335" loading="lazy"><img class="look-oyen" src="assets/shots/oyen/page-ai.webp" alt="The AI tab in the Oyen theme" width="660" height="335" loading="lazy"></div></div>
+    <p>Track your AI usage. The AI tab sits right after Focus. <b>Each AI service on your computer gets a card:</b> your plan, each limit as a bar with when it resets, credits or balance left, and today's spend where the service tells it. Services it doesn't find stay off the list. Under Services, hide any of them, or add one with its key.</p>
     <h4>The services</h4>
     <ul class="names" aria-label="Services the AI tab reads">
       <li>Codex</li>
       <li>Claude Code</li>
       <li>OpenCode Go</li>
       <li>Gemini CLI</li>
+      <li>Antigravity</li>
       <li>Cursor</li>
       <li>GitHub Copilot</li>
       <li>Kimi Code</li>
@@ -1663,10 +1873,47 @@ dialog.more-sheet::backdrop { background: rgba(0, 0, 0, 0.42); -webkit-backdrop-
     <p>Switch them on and the island tells you <b>when a limit is nearly used up, when it runs out, and when it's back</b> after it resets. For that it reads the files on your computer every few minutes and asks the services at most every 10 minutes, and it rests while your computer is locked, the screen is off or battery saver is on. With notices off, nothing runs while the tab is closed: it reads when you open it.</p>
     <h4>Your sign-ins stay yours</h4>
     <p>Each service's sign-in is read on your computer and goes only to that service's own server. <b>Nothing about your usage goes to Oyenza.</b> Oyenza Studio only reads: it never changes another app's files or renews its sign-in, so it can't sign you out of that app. When a sign-in has run out, the card says so: open that app once and it's back.</p>
+    <p><b>Claude Code through the Claude app.</b> If you run Claude Code from the Claude app, its card uses the sign-in the app keeps for Claude Code. When Claude Code is signed out, its card has <b>Sign in</b>: it starts Claude Code's own sign-in in a terminal window, or opens the Claude app. On a Mac, macOS asks once before the Claude app's or Cursor's sign-in is read: choose Always Allow.</p>
+    <p><b>Antigravity, on a Mac.</b> Google answers Antigravity's limits only to Antigravity itself, so the AI tab asks Antigravity's own <code>agy</code>, through its <code>/usage</code> command, which uses none of your quota. It runs it only while the AI tab is open, at most every 15 minutes, and never opens a browser: when <code>agy</code> wants you to sign in again, the card says so; sign in to Antigravity, then press Refresh. It needs <code>agy</code> 1.1.11 or later. New in 0.2.25; on Windows, not yet.</p>
     <h4>Oyenza Inference</h4>
     <p>Connect your inference.oyenza.com account the way you sign in on a TV: the AI tab shows 8 letters, and you approve them in your inference.oyenza.com dashboard. Oyenza Studio then gets a key that can only read your balance and spend. It never sees your prompts, keys or payments, and it can't spend your credit. Disconnect it in the AI tab, or in the dashboard under Connected apps.</p>
   </div>
 </dialog>
+<dialog class="more-sheet" id="m-notes" aria-labelledby="m-notes-t">
+  <form method="dialog"><button class="sheet-x" aria-label="Close"><svg class="ico"><use href="#i-x"/></svg></button></form>
+  <div class="sheet-body">
+    <p class="t-label new">Studio Pro · Windows and Mac</p>
+    <h2 class="t-m" id="m-notes-t">Your call, written up.</h2>
+    <div class="sheet-shot"><div class="sky-fill"></div><div class="isl"><img class="look-classic" src="assets/shots/classic/page-notes-listening.webp" alt="The Notes page while Oyen listens: the time so far and a bar for each sound" width="660" height="259" loading="lazy"><img class="look-oyen" src="assets/shots/oyen/page-notes-listening.webp" alt="The Notes page while Oyen listens, in the Oyen theme" width="660" height="259" loading="lazy"></div></div>
+    <p><b>One click, and Oyen listens to your call</b> in Meet, Zoom, Teams or WhatsApp, with no bot joining. He hears your microphone and your computer's own sound. Stop when it's over, and he writes up the summary, the decisions and who does what, with the whole transcript.</p>
+    <p>While he listens, the closed island shows him with a red dot and the time so far. The notes are saved on your computer.</p>
+    <p><b>Your recording goes to Oyenza's server</b> to be written up, and is deleted once your notes are saved. On a Mac, hearing the computer's own sound takes macOS 14.2 or later.</p>
+  </div>
+</dialog>
+
+<dialog class="more-sheet" id="m-ielts" aria-labelledby="m-ielts-t">
+  <form method="dialog"><button class="sheet-x" aria-label="Close"><svg class="ico"><use href="#i-x"/></svg></button></form>
+  <div class="sheet-body">
+    <p class="t-label new">Studio Pro · Windows and Mac</p>
+    <h2 class="t-m" id="m-ielts-t">Practise IELTS Speaking, out loud.</h2>
+    <div class="sheet-shot cut"><div class="sky-fill"></div><div class="isl"><img class="look-classic" src="assets/shots/classic/page-ielts.webp" alt="The IELTS page: Oyen beside five levels, each with its target band, the first ones done and the rest still locked" width="660" height="198" loading="lazy"><img class="look-oyen" src="assets/shots/oyen/page-ielts.webp" alt="The IELTS page in the Oyen theme" width="660" height="198" loading="lazy"></div></div>
+    <p><b>Oyen asks IELTS Speaking questions out loud,</b> listens to your answers through your microphone and gives you a band.</p>
+    <p>It's practice: the band is Oyen's estimate, not an official IELTS result. <b>Your answers go to Oyenza's server</b> to be scored, and are deleted once that's done.</p>
+    <p class="t-small">IELTS® is a trademark of the IELTS partners. Not official IELTS material, not endorsed by them.</p>
+  </div>
+</dialog>
+
+<dialog class="more-sheet" id="m-downloader" aria-labelledby="m-downloader-t">
+  <form method="dialog"><button class="sheet-x" aria-label="Close"><svg class="ico"><use href="#i-x"/></svg></button></form>
+  <div class="sheet-body">
+    <p class="t-label new">Studio Pro · Windows and Mac</p>
+    <h2 class="t-m" id="m-downloader-t">Paste a link. Keep the video or the sound.</h2>
+    <div class="sheet-shot"><div class="sky-fill"></div><div class="isl"><img class="look-classic" src="assets/shots/classic/page-downloads.webp" alt="The Downloads page: paste a link, pick Video or Sound, and each download with its progress" width="660" height="335" loading="lazy"><img class="look-oyen" src="assets/shots/oyen/page-downloads.webp" alt="The Downloads page in the Oyen theme" width="660" height="335" loading="lazy"></div></div>
+    <p><b>Paste a link, pick Video or Sound,</b> and watch it come in to Downloads and the Shelf. Only what you have the right to keep.</p>
+    <p>It works with yt-dlp, and its tools download once you switch it on. Nothing runs unless a download does. It isn't in the Microsoft Store copy.</p>
+  </div>
+</dialog>
+
 <dialog class="more-sheet" id="m-system" aria-labelledby="m-system-t">
   <form method="dialog"><button class="sheet-x" aria-label="Close"><svg class="ico"><use href="#i-x"/></svg></button></form>
   <div class="sheet-body">
@@ -1695,9 +1942,10 @@ dialog.more-sheet::backdrop { background: rgba(0, 0, 0, 0.42); -webkit-backdrop-
     <p class="t-label">Prayer times · An add-on</p>
     <h2 class="t-m" id="m-prayer-t">Prayer times, for your city.</h2>
     <p>Today's times as Kemenag RI publishes them for your kab/kota, the next prayer and how long until it, and the qibla. <b>New in 0.2.1:</b> the page counts down to the next prayer in hours, minutes and seconds, and shows today's five prayers on one arc, with the sun or the moon. <b>New in 0.2.10:</b> anywhere in the world. Type any city, or let the location find it: 33,000 cities, each with the method its country follows, on its own clock, summer time included. <b>Your computer's location finds the nearest of Kemenag's 517 places</b>, from Windows' location or the Mac's Location Services, and checks again when your laptop travels, or you type your city. The point stays on your computer: it only picks the place.</p>
-    <p>In the ten minutes before each prayer the island counts down, and when it's time it says so, with a short tone, the adzan recorded at Masjidil Haram, or nothing. Checked against Kemenag's 2026 schedule: 98.2% of 227,367 times to the minute, none more than a minute off. Makkah, Madinah and Jeddah use Umm al-Qura.</p>
+    <p>In the ten minutes before each prayer the island counts down, and when it's time it says so, with a short tone, the adzan, or nothing. <b>New in 0.2.25:</b> a clearer adzan, a new recording without the crowd and the echo of the old one ("The Adhan - Muslim Call to Prayer - Aaqib Azeez" by Atcovi, Wikimedia Commons, CC BY-SA 4.0). Checked against Kemenag's 2026 schedule: 98.2% of 227,367 times to the minute, none more than a minute off. Makkah, Madinah and Jeddah use Umm al-Qura.</p>
+    <p><b>New in 0.2.28: Kemenag or Muhammadiyah.</b> Click Change place and pick under Times and Hijri dates. Kemenag, the default, keeps Kemenag's schedule and the government's Hijri calendar (MABIMS, with the months the sidang isbat announced). Muhammadiyah (KHGT) gives places in Indonesia Majelis Tarjih's schedule, with Subuh at 18°, and the Kalender Hijriah Global Tunggal: one Hijri date for the whole world, as Muhammadiyah publishes it up to 1451 H, and worked out from the moon after that. Its times match khgt.muhammadiyah.or.id to the minute, or within one. Either way, today's Hijri date shows above the arc.</p>
     <p><b>New in 0.2.3: on the Mac.</b> Prayer times is in the Mac's Add-ons tab too, with the adzan. Around a MacBook's notch the countdown sits beside the camera: the moon on the left, the minutes on the right.</p>
-    <p>Prayer times is an add-on: open the + at the end of the tabs and switch it on. It downloads then, 1.9 MB, checked against the fingerprint built into the app, and switching it off deletes its files.</p>
+    <p>Prayer times is an add-on: open the + at the end of the tabs and switch it on. It downloads then, 959 KB, checked against the fingerprint built into the app, and switching it off deletes its files.</p>
   </div>
 </dialog>
 <dialog class="more-sheet" id="m-script" aria-labelledby="m-script-t">
@@ -1721,7 +1969,7 @@ dialog.more-sheet::backdrop { background: rgba(0, 0, 0, 0.42); -webkit-backdrop-
     <p>Switch it on in System › Games, or right-click the island › In full-screen apps › Show FPS, GPU and CPU over games.</p>
     <p>Frames are counted the way Intel's PresentMon and Xbox Game Bar count them, from Windows' own log of each frame a game shows. Nothing is loaded into the game, so anti-cheat has nothing to see. DirectX 9 to 12, Vulkan and OpenGL. The first time, Windows asks once for an admin OK, as Game Bar's FPS counter does, and FPS shows from your next sign-in. Over a full-screen app, Glass draws smoked glass instead of copying the screen.</p>
     <p><b>Stays on top:</b> when another window covers the island, such as a browser left on top after full screen or an app set to stay on top, the island goes back on top. In full-screen games and videos you choose: right-click the island or open Settings, then In full-screen apps › Hide or Stay on top (on a Mac, the menu bar under Oyen's mark). Hide is the default. A game in exclusive full-screen mode still covers every window.</p>
-    <p><b>Over maximized windows it stays.</b> The island sits over the middle of the top edge, so over a maximized browser it can cover the tabs there. To keep that spot clear, pick <b>Hidden until hover</b> as the idle look: while nothing plays, only an invisible strip stays at the top edge until you point at it. (0.2.4 and 0.2.5 stepped aside over maximized windows by default, which made the island seem to vanish; 0.2.6 drops that.)</p>
+    <p><b>Over maximized windows it stays.</b> The island starts in the middle of the top edge, so over a maximized browser it can cover the tabs there. <b>Press the island and drag it left or right along the top edge</b>, out of the way: on Windows since 0.2.22, and on a Mac since 0.2.23. It stays where you leave it, also after a restart, and opens away from the screen's edge. To bring it back, drag it to the middle, or right-click it › Move island to the centre (on a Mac, it's in the menu bar's menu too). On a MacBook with a notch, Classic, Oyen and Glass stay at the camera, in the menu bar, where they don't cover the tabs; Pill's floating island drags, and slides back into the notch when it rests; Diorama's resting pill stays where you leave it. Or pick <b>Hidden until hover</b> as the idle look: while nothing plays, only an invisible strip stays at the top edge until you point at it. (0.2.4 and 0.2.5 stepped aside over maximized windows by default, which made the island seem to vanish; 0.2.6 drops that.)</p>
   </div>
 </dialog>
 <dialog class="more-sheet" id="m-oyen" aria-labelledby="m-oyen-t">
@@ -1773,6 +2021,40 @@ dialog.more-sheet::backdrop { background: rgba(0, 0, 0, 0.42); -webkit-backdrop-
     <p>Right-click the island, then <kbd>Theme</kbd> › <kbd>Pill</kbd>. Or open the island, press the gear and pick <kbd>Pill</kbd> under Theme. On a Mac, it's in the menu bar's Theme menu.</p>
   </div>
 </dialog>
+<dialog class="more-sheet" id="m-diorama" aria-labelledby="m-diorama-t">
+  <form method="dialog"><button class="sheet-x" aria-label="Close"><svg class="ico"><use href="#i-x"/></svg></button></form>
+  <div class="sheet-body">
+    <p class="t-label new">New in 0.2.27</p>
+    <h2 class="t-m" id="m-diorama-t">Diorama. A little place that keeps your day.</h2>
+    <p>Diorama is Pill with a picture in its resting capsule: a small window onto a pixel-art place, as long as a MacBook's notch. Behind a raised frame, cream by day and indigo at night, stand a house at one end and a tree at the other, with a letter box, a garden fence, two bushes and a lamp post between them, and the time written in the sky.</p>
+    <div class="dio-film"><figure class="shot-card">
+      <div class="strip"><div class="sky-fill"></div>
+        <picture>
+          <source media="(prefers-reduced-motion: reduce)" srcset="assets/shots/zoom/diorama/slide.webp" width="760" height="184">
+          <img src="assets/shots/diorama/slide-film.webp" alt="A hand presses the glass ball on the house and slides it along the pill: the day runs on through the golden hour and the sunset, and as the ball reaches the tree the frame turns indigo, the stars come out and the window and the lamp light up; then the hand slides it back, and the place runs back to the morning" width="380" height="102" loading="lazy">
+        </picture>
+      </div>
+      <figcaption class="t-tile"><span class="film-cap"><b>The slide, by hand.</b> Into the night and back to the morning, as fast as you slide it.</span><span class="still-cap"><b>The ball held halfway,</b> at the sunset it passes. A film of the slide plays here when your system allows motion.</span></figcaption>
+    </figure></div>
+    <p><b>New in 0.2.29: slide the glass ball.</b> Press it and slide it along, like a day and night switch: the place runs on through the day with it, through the golden hour and the sunset into the night, or at night through the small hours into the morning. Let go and it rolls on to the end it was nearer, or the one you threw it toward; tap it to send it to the other end. Left on the other side of the day, the whole theme keeps that side until the clock comes round to it: by day, 45 minutes after sunset; at night, 50 minutes after sunrise. Pressing the ball never opens or moves the island; press anywhere else on it for that.</p>
+    <ul>
+      <li><b>The sky follows your clock:</b> pink at dawn, blue by day with the sun crossing it, golden from about an hour before sunset, then dusk, the stars one by one and the moon in tonight's phase.</li>
+      <li><b>The house keeps hours:</b> the window is lit until midnight and again from five, smoke rises while breakfast and supper cook, and the lamp post is lit from dusk.</li>
+      <li><b>The cat's day:</b> an orange cat sits by the door at dawn, naps under the tree around noon, comes home for the golden hour and sits in the lit window after dark.</li>
+      <li><b>The glass ball</b> magnifies what's under it. It rests on the house by day and on the tree at night. At sunset it rolls across and night falls behind it; at sunrise it rolls back. It rolls once when you pick the theme, too.</li>
+      <li><b>The time</b> is 12- or 24-hour as you've set it. On a laptop, a bolt stands beside it while the battery charges, and a red battery at 20% or less. Idle look › Minimal shows the place without the clock, and Hidden until hover hides it. Diorama has no eyes and no status bar.</li>
+      <li><b>Your own sunrise and sunset:</b> with the Prayer times add-on on and a place picked, the sun rises and sets when it does there. Otherwise it rises at six and sets at six.</li>
+      <li><b>The whole island matches:</b> the open card, the music pill, timers, pop-ups and notices are the same raised frame round a pane, cream with slate ink by day, indigo with cream ink and the window's gold at night, in the Outfit typeface. They change with the ball. Their pages and sizes are Pill's.</li>
+      <li><b>On a MacBook with a notch,</b> the resting pill floats just below the notch instead of hiding in it, and stays where you drag it.</li>
+      <li><b>Nothing new runs at rest:</b> the picture is painted once a minute, with the tick the clock already wakes for. The ball's roll draws frames for about a second and a half, and a slide draws one each time the pointer moves.</li>
+    </ul>
+    <div><figure class="shot-card">
+      <div class="strip tall"><div class="sky-fill"></div><div class="isl"><img src="assets/shots/diorama/page-settings-day.webp" alt="Settings in the island, in Diorama by day: Diorama picked under Theme, Clock under Idle look, and Version 0.2.29" width="620" height="330" loading="lazy"></div></div>
+      <figcaption class="t-tile"><b>Diorama, picked in Settings.</b> The gear opens it in the island.</figcaption>
+    </figure></div>
+    <p>Right-click the island, then <kbd>Theme</kbd> › <kbd>Diorama</kbd>. Or open the island, press the gear and pick <kbd>Diorama</kbd> under Theme. On a Mac, it's in the menu bar's Theme menu. Classic stays the default look.</p>
+  </div>
+</dialog>
 <dialog class="more-sheet" id="m-mac" aria-labelledby="m-mac-t">
   <form method="dialog"><button class="sheet-x" aria-label="Close"><svg class="ico"><use href="#i-x"/></svg></button></form>
   <div class="sheet-body">
@@ -1782,14 +2064,16 @@ dialog.more-sheet::backdrop { background: rgba(0, 0, 0, 0.42); -webkit-backdrop-
     <ul>
       <li>Whatever plays: the Music and Spotify apps, YouTube, YouTube Music or Spotify in your browser, and any other player in the Mac's Now Playing, with synced lyrics from LRCLIB, or Apple Music's own with your token, and the reading under Japanese, Korean and Chinese lines, on the closed island too.</li>
       <li>The focus timer, the Shelf with Phone drop over the same Wi-Fi, tasks, and the System add-on with your Mac's CPU, graphics, memory, drives, network, battery and busiest apps.</li>
-      <li>Pop-ups for volume, charging and Bluetooth headphones (without the battery level; macOS shows AirPods' own when they connect), the Classic, Oyen, Glass and Pill themes, and start at login. Every option is in the menu bar, under Oyen's mark.</li>
+      <li>Pop-ups for volume, charging and Bluetooth headphones (without the battery level; macOS shows AirPods' own when they connect), the Classic, Oyen, Glass, Pill and Diorama themes, and start at login. Every option is in the menu bar, under Oyen's mark.</li>
       <li>Full-screen apps: while a video, a game or a slideshow is full screen, the island stays out of its way and comes back after, as on Windows. Or it stays on top: the menu bar's In full-screen apps, or Settings.</li>
       <li>Oyenza sign-in: money in and out, bills due and your last 7 days on the island, as on Windows. The Mac's key stays in a file only your Mac account can read.</li>
       <li>Glass is macOS's own glass, Liquid Glass on macOS 26 and a dark blur before it, with a black strip where it meets the notch.</li>
       <li>Pill: on a MacBook with a notch, the resting island goes back into the notch; music, the timer, the prayer countdown, pop-ups, notices and the open island float as the pill just below it. Without a notch it floats below the top of the screen, as on Windows.</li>
+      <li>Diorama: its resting pill floats just below the notch, where its picture shows, instead of going back into it, and stays where you drag it. Everything else hangs below the notch as Pill's does, in Diorama's frame.</li>
     </ul>
     <p><b>New in 0.2.1:</b> Japanese readings and Script reader are add-ons in the Mac's Add-ons tab, so the download is about a third of what it was.</p>
     <p><b>New in 0.2.3:</b> Prayer times, in the Mac's Add-ons tab: Location Services finds your city, or you type it, the adzan plays when it's time, and around the notch the countdown sits beside the camera.</p>
+    <p><b>New in 0.2.23:</b> move the island. On a Mac without a notch, or on another display, press it and drag it left or right along the top edge, in every theme. On a MacBook with a notch, Pill's floating island drags the same way and slides back into the notch to rest; Classic, Oyen and Glass stay at the camera. Move island to the centre, in the menu bar's menu, brings it back.</p>
     <p>macOS 14 or later, on Apple silicon or Intel. One app for both, <span data-release-copy="mac-size">5.3&nbsp;MB</span>. It's signed with an Apple Developer ID and checked by Apple, so it opens like any Mac app.</p>
   </div>
 </dialog>
@@ -1842,6 +2126,33 @@ dialog.more-sheet::backdrop { background: rgba(0, 0, 0, 0.42); -webkit-backdrop-
   <div class="sheet-body">
     <p class="t-label">Everything new</p>
     <h2 class="t-m" id="m-new-t">Release by release.</h2>
+    <h4>New in 0.2.29</h4>
+    <ul class="new-list">
+      <li><i class="ic" style="--c:#5e5ce6"><svg class="ico"><use href="#i-moon"/></svg></i><span><b>Kemenag or Muhammadiyah in Advanced settings</b>Advanced settings › Prayer times has the choice the Prayer tab has: follow Kemenag or Muhammadiyah (KHGT), for the times and the Hijri dates.</span></li>
+    </ul>
+    <h4>New in 0.2.26</h4>
+    <ul class="new-list">
+      <li><i class="ic" style="--c:#00c7be"><svg class="ico"><use href="#i-meter"/></svg></i><span><b>Claude's new plan name</b>Claude's old Max 20x plan reads Ultra 10x on the AI tab. On a Mac, since 0.2.25, the tab also shows Antigravity's 5-hour and weekly limits for each group of models. Part of Studio Pro.</span></li>
+    </ul>
+    <h4>New in 0.2.25</h4>
+    <ul class="new-list">
+      <li><i class="ic" style="--c:#5e5ce6"><svg class="ico"><use href="#i-moon"/></svg></i><span><b>A clearer adzan</b>Prayer times plays a new recording of the adzan: clear and full, without the crowd and the echo of the old one. The add-on is 959&nbsp;KB now, half its old size.</span></li>
+    </ul>
+    <h4>New in 0.2.22</h4>
+    <ul class="new-list">
+      <li><i class="ic" style="--c:#8e8e93"><svg class="ico"><use href="#i-gear"/></svg></i><span><b>Move the island</b>Press the island and drag it along the top edge, out of your browser's tabs. It stays there, and opens away from the edge. On Windows; on a Mac too from 0.2.23, in every theme without a notch, and in Pill and Diorama around a MacBook's notch.</span></li>
+    </ul>
+    <h4>New in 0.2.21</h4>
+    <ul class="new-list">
+      <li><i class="ic" style="--c:#8e8e93"><svg class="ico"><use href="#i-gear"/></svg></i><span><b>Settings in the island again</b>The gear opens Settings in the island: your account, the theme, the idle look and the switches you use most. Its last row, Advanced settings, opens every setting in a window. On Windows and Mac.</span></li>
+      <li><i class="ic" style="--c:#8e8e93"><svg class="ico"><use href="#i-gear"/></svg></i><span><b>Advanced settings that glide</b>Every setting in one window, light or dark like your system. Switches slide and highlights glide at your screen's own rate, up to 144 frames a second, on Windows and Mac.</span></li>
+    </ul>
+    <h4>New in 0.2.19</h4>
+    <ul class="new-list">
+      <li><i class="ic" style="--c:#34c759"><svg class="ico"><use href="#i-tag"/></svg></i><span><b>Meeting notes on the Mac</b>Oyen listens to your call through your Mac's microphone and its own sound, then writes the summary, the decisions and the whole transcript. Studio Pro; the Mac's own sound needs macOS 14.2 or later.</span></li>
+      <li><i class="ic" style="--c:#34c759"><svg class="ico"><use href="#i-tag"/></svg></i><span><b>The IELTS coach</b>Oyen asks IELTS Speaking questions out loud, listens to your answers and gives you a band. Studio Pro, now on Windows and Mac.</span></li>
+      <li><i class="ic" style="--c:#34c759"><svg class="ico"><use href="#i-tag"/></svg></i><span><b>The Downloader</b>Paste a link, pick Video or Sound, and watch it come in to Downloads and the Shelf. Studio Pro, on Windows and Mac. Only what you have the right to keep.</span></li>
+    </ul>
     <h4>New in 0.2.16</h4>
     <ul class="new-list">
       <li><i class="ic" style="--c:#00c7be"><svg class="ico"><use href="#i-meter"/></svg></i><span><b>A tab for your AI plans</b>What's left of Codex, Claude Code, OpenCode Go and more, and when each one resets. Switch on a heads-up before you run out.</span></li>
@@ -2126,12 +2437,13 @@ dialog.more-sheet::backdrop { background: rgba(0, 0, 0, 0.42); -webkit-backdrop-
   document.getElementById('galPrev').addEventListener('click', function () { goCard(gi - 1); });
   document.getElementById('galNext').addEventListener('click', function () { goCard(gi + 1); });
 
-  // ---- Four looks: swatches switch the stage.
+  // ---- Five looks: swatches switch the stage.
   var caps = {
     classic: '<b>Classic.</b> Black and quiet, the default look.',
     oyen: '<b>Oyen.</b> Warm cream, his orange, and Oyen peeking over the edge.',
     glass: '<b>Glass.</b> It bends what\'s under it, light or dark with what\'s behind it.',
-    pill: '<b>Pill.</b> A black capsule floating a little below the top.'
+    pill: '<b>Pill.</b> A black capsule floating a little below the top.',
+    diorama: '<b>Diorama.</b> A little pixel-art place that keeps your day, in a pill as long as a notch.'
   };
   var stage = document.getElementById('looksStage');
   var sws = [].slice.call(document.querySelectorAll('.sw'));
@@ -2182,11 +2494,44 @@ dialog.more-sheet::backdrop { background: rgba(0, 0, 0, 0.42); -webkit-backdrop-
     primary.href = MAC; primary.setAttribute('data-release', 'mac-link');
     other.href = WIN; other.removeAttribute('data-release'); other.textContent = 'Download for Windows';
   }
-  // On a phone the downloads lead to Get Oyenza Studio, where both are.
-  if (window.matchMedia('(max-width: 734px) and (pointer: coarse)').matches) {
-    [document.querySelector('.top-dl'), primary].forEach(function (a) { a.href = '#get'; a.removeAttribute('data-release'); });
+  // On a phone the downloads lead to Get Oyenza Studio, which there sends the link to your computer. The head
+  // script sets .phone with the same check, so the page paints right the first time.
+  var phone = document.documentElement.classList.contains('phone');
+  if (phone) {
+    [document.querySelector('.top-dl'), document.querySelector('.side-dl'), primary].forEach(function (a) { if (a) { a.href = '#get'; a.removeAttribute('data-release'); } });
+    document.querySelectorAll('.side-dl [data-download-label]').forEach(function (s) { s.textContent = 'Send to your computer'; });
     other.hidden = true;
   }
+
+  // ---- Send it to your computer. The link keeps this visit's utm tags (a creator's link, say) and adds
+  // utm_content=send-to-pc, so the visit it brings on the computer counts for the same place. Nothing leaves the
+  // phone except through the visitor's own share sheet, WhatsApp or mail app.
+  (function () {
+    var q = new URLSearchParams(location.search), keep = new URLSearchParams();
+    ['utm_source', 'utm_medium', 'utm_campaign'].forEach(function (k) { var v = q.get(k); if (v) keep.set(k, v.slice(0, 100)); });
+    keep.set('utm_content', 'send-to-pc');
+    var url = location.origin + '/?' + keep.toString() + '#get';
+    if (!phone) {
+      var note = document.querySelector('.sent-note');
+      if (note && q.get('utm_content') === 'send-to-pc') note.hidden = false;
+      return;
+    }
+    var card = document.getElementById('send');
+    if (!card) return;
+    var what = 'Oyenza Studio for my computer';
+    var share = card.querySelector('[data-send="share"]'), copy = card.querySelector('[data-send="copy"]'), field = document.getElementById('send-url');
+    card.querySelector('[data-send="whatsapp"]').href = 'https://wa.me/?text=' + encodeURIComponent(what + ': ' + url);
+    card.querySelector('[data-send="email"]').href = 'mailto:?subject=' + encodeURIComponent(what) + '&body=' + encodeURIComponent('Open this on your computer to get Oyenza Studio:\n\n' + url);
+    if (navigator.share) {
+      share.hidden = false;
+      share.addEventListener('click', function () { navigator.share({ title: 'Oyenza Studio', text: what, url: url }).catch(function () {}); });
+    }
+    copy.addEventListener('click', function () {
+      function select() { field.value = url; field.hidden = false; field.focus(); field.select(); }
+      function copied() { copy.textContent = 'Copied'; setTimeout(function () { copy.textContent = 'Copy link'; }, 2000); }
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(copied, select); else select();
+    });
+  })();
 
   // ---- The download line follows the latest release on GitHub, so the page stays
   // current between edits. Its own text is the fallback when the API is out of reach.

@@ -24,8 +24,10 @@
 //! another host), keeps no cookies and caches nothing. A typed key a server
 //! refused isn't sent there again this run (`pace::Refusals`).
 //!
-//! Nothing is written but the typed keys, and the log gets one line per
-//! change of a service's state: never a token, a key, an answer or an email.
+//! Nothing is written but the typed keys (and, on a Mac, the private folder
+//! `agy` runs in, gone when the run ends), and the log gets one line per
+//! change of a service's state and one per run of `agy`: never a token, a
+//! key, an answer or an email.
 
 use crate::commands::UsageCmd;
 use crate::events::{AppEvent, EventSink};
@@ -33,8 +35,8 @@ use crate::services::http::{Client, FetchError, Method, MtaGuard};
 use crate::state::InferenceLink;
 use studio_usage::alerts::{Alert, AlertCfg, Memory};
 use studio_usage::pace::{self, KeyGate, Look, Looks, Pace, Refusals};
-use studio_usage::{self as usage, oyenza, Dirs, Got, NetFail, Os, Outcome, Provider, ProviderId, Reach, Reply, Request, Snapshot, Trouble, Want};
-use std::cell::RefCell;
+use studio_usage::{self as usage, oyenza, Cli, Dirs, Got, NetFail, Os, Outcome, Provider, ProviderId, Reach, Reply, Request, Snapshot, Trouble, Want};
+use std::cell::{Cell, RefCell};
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
@@ -193,6 +195,9 @@ struct Worker {
     svcs: Vec<Svc>,
     /// Where the typed keys were refused, so they aren't sent there again.
     refusals: Refusals,
+    /// A program asked the person to sign in in a browser: it isn't run again
+    /// until Refresh, or it would open one at every look.
+    held: bool,
     looks: Looks,
     /// What the island wanted when the worker last looked at its queue.
     watch: Watch,
@@ -246,6 +251,7 @@ impl Worker {
             keys: BTreeSet::new(),
             svcs: ProviderId::ALL.iter().map(|_| Svc::default()).collect(),
             refusals: Refusals::default(),
+            held: false,
             looks: Looks::default(),
             watch: Watch::default(),
             cfg: AlertCfg::default(),
@@ -310,7 +316,8 @@ impl Worker {
 
     // ------------------------------------------------------------ looking
 
-    /// Every shown service, once (`pace` says what each may do).
+    /// Every shown service, once (`pace` says what each may do), in
+    /// [`look_order`].
     fn look(&mut self, shared: &Shared) {
         let w = self.watch;
         let look = self.looks.begin(w.open, self.tick());
@@ -320,7 +327,7 @@ impl Worker {
         self.cfg = self.alert_cfg();
         let mut alerts = Vec::new();
         let mut cut = false;
-        for (i, p) in usage::all().into_iter().enumerate() {
+        for (i, p) in look_order() {
             if self.stop(shared) {
                 cut = true;
                 break;
@@ -381,20 +388,28 @@ impl Worker {
     /// kept and told. Returns its notices.
     fn refresh(&mut self, i: usize, p: &dyn Provider, wants: &[Want], look: Look) -> Vec<Alert> {
         let Some(reach) = self.svcs[i].pace.reach(self.tick(), p.min_gap_s(), look) else { return Vec::new() };
+        // A program costs far more than a request: it runs for the person
+        // looking at the tab (or pressing Refresh), never for the notices
+        // alone, which read what is there.
+        let reach = if look == Look::Notices && p.runs_programs() { Reach::Local } else { reach };
         let now = crate::clock::unix_now();
-        let Worker { dirs, names, client, refusals, .. } = self;
+        let Worker { dirs, names, client, refusals, held, .. } = self;
         // The service's typed key, if it reads one, goes through the door:
         // never again to an address that refused it.
         let gate = RefCell::new(KeyGate::new(refusals, p.takes_key().map(|k| k.secret)));
+        // Whether the Mac's keychain was asked, first or in a step (opening
+        // a sealed sign-in asks it on the way).
+        let keyed = Cell::new(false);
         // A reader reads other apps' files and servers' answers: should one
         // of them trip it up, the rest of the tab carries on without it.
         let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let read = |w: &Want| {
+                keyed.set(keyed.get() || matches!(w, Want::Keychain { .. }));
                 let got = read(w, names);
                 gate.borrow_mut().saw(w, &got);
                 got
             };
-            pace::run(p, dirs, wants, now, reach, read, |req| gate.borrow_mut().ask(req, |r| fetch(client, r)))
+            pace::run(p, dirs, wants, now, reach, read, |req| gate.borrow_mut().ask(req, |r| fetch(client, r)), |cli| run_program(cli, dirs, held))
         }));
         let gate = gate.into_inner();
         match run {
@@ -404,7 +419,7 @@ impl Worker {
                 // prompt would come out of nowhere): a sign-in kept only there
                 // reads as missing on a notices-only look, which means "not
                 // asked yet", not "signed out". What the tab had stays.
-                if look == Look::Notices && wants.iter().any(|w| matches!(w, Want::Keychain { .. })) && matches!(run.outcome, Some(Err(Trouble::NotFound | Trouble::SignedOut))) {
+                if look == Look::Notices && keyed.get() && matches!(run.outcome, Some(Err(Trouble::NotFound | Trouble::SignedOut))) {
                     run.outcome = None;
                 }
                 self.heard(i, p, reach, run)
@@ -508,6 +523,7 @@ impl Worker {
             // tells its keychain reader to ask again first.)
             UsageCmd::Refresh => {
                 self.refusals.clear();
+                self.held = false;
                 self.looks.ask(self.tick());
             }
             UsageCmd::SetKey { secret, key } => self.set_key(secret, &key),
@@ -515,8 +531,29 @@ impl Worker {
             UsageCmd::Connect => self.connect(),
             UsageCmd::CancelConnect => self.cancel_connect(),
             UsageCmd::Disconnect => self.disconnect(),
+            UsageCmd::SignIn(id) => self.sign_in(id),
             // The app keeps these in its settings; the watch brings them.
             UsageCmd::Hide(_) | UsageCmd::Show(_) => {}
+        }
+    }
+
+    /// The card's Sign in, for Claude Code: its own `claude auth login` in
+    /// a terminal window, or the Claude app (`claude::sign_in_via`). The
+    /// tab reads again as the person comes back to it.
+    fn sign_in(&self, id: ProviderId) {
+        use usage::claude::SignInVia;
+        if id != ProviderId::Claude {
+            return;
+        }
+        match usage::claude::sign_in_via(&self.dirs, |p| p.is_file()) {
+            SignInVia::App => {
+                crate::pinfo!("usage: claude: sign in: the Claude app");
+                open_claude_app();
+            }
+            SignInVia::Cli(program) => {
+                crate::pinfo!("usage: claude: sign in: claude auth login{}", if program.is_some() { "" } else { " (on PATH)" });
+                run_login(program);
+            }
         }
     }
 
@@ -725,6 +762,21 @@ impl Worker {
     }
 }
 
+/// The services a look goes through, with their places in `ProviderId::ALL`.
+/// On a Mac, a service that starts a program (Antigravity's `agy`, seconds
+/// long) comes after all the others, so their cards don't wait for it.
+#[cfg(target_os = "macos")]
+fn look_order() -> impl Iterator<Item = (usize, &'static dyn Provider)> {
+    let all = usage::all().into_iter().enumerate();
+    all.clone().filter(|(_, p)| !p.runs_programs()).chain(all.filter(|(_, p)| p.runs_programs()))
+}
+
+/// Windows starts no program for the tab: the services in their own order.
+#[cfg(not(target_os = "macos"))]
+fn look_order() -> impl Iterator<Item = (usize, &'static dyn Provider)> {
+    usage::all().into_iter().enumerate()
+}
+
 /// A service's place in `ProviderId::ALL`, and so in the worker's list.
 fn at(id: ProviderId) -> usize {
     ProviderId::ALL.iter().position(|p| *p == id).unwrap_or(0)
@@ -740,6 +792,7 @@ fn read(w: &Want, names: &[&'static str]) -> Got {
         Want::Secret(name) if names.contains(name) => load_key(name).map_or(Got::Missing, Got::Text),
         Want::Secret(_) => Got::Missing,
         Want::Range { path, offset, len } => pace::read_range(path, *offset, *len),
+        Want::Unseal { sealed, key } => unseal(&sealed.0, key.as_ref().map(|k| k.0.as_slice())),
     }
 }
 
@@ -821,6 +874,48 @@ fn computer_name() -> String {
     crate::services::phonedrop::computer_name().unwrap_or_default()
 }
 
+/// The Claude app, through its own link.
+#[cfg(not(target_os = "macos"))]
+fn open_claude_app() {
+    crate::shell::open_claude_app();
+}
+
+#[cfg(target_os = "macos")]
+fn open_claude_app() {
+    crate::services::open("claude://");
+}
+
+/// `claude auth login` in a console window: `program`, or `claude` as PATH
+/// finds it.
+#[cfg(not(target_os = "macos"))]
+fn run_login(program: Option<PathBuf>) {
+    crate::shell::run_in_console(program.as_deref().unwrap_or("claude".as_ref()), "auth login");
+}
+
+/// `claude auth login` in Terminal, which runs a `.command` file it's handed:
+/// one in Studio's cache folder that only the person can read or run.
+/// Without a known `program`, their login shell finds `claude` (a Mac app
+/// started from the Dock has no PATH of theirs).
+#[cfg(target_os = "macos")]
+fn run_login(program: Option<PathBuf>) {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let quote = |s: &str| format!("'{}'", s.replace('\'', "'\\''"));
+    let login = match program {
+        Some(p) => format!("{} auth login", quote(&p.to_string_lossy())),
+        None => format!("\"${{SHELL:-/bin/zsh}}\" -lic {}", quote("claude auth login")),
+    };
+    let script = format!("#!/bin/sh\n# Oyenza Studio's AI tab: Claude Code's own sign-in.\n{login} && echo && echo 'Signed in. Oyenza Studio reads it when you open the AI tab.'\n");
+    let dir = crate::paths::cache_dir();
+    let path = dir.join("Claude Code sign-in.command");
+    let _ = std::fs::remove_file(&path);
+    let wrote = std::fs::create_dir_all(&dir).and_then(|()| std::fs::OpenOptions::new().write(true).create_new(true).mode(0o700).open(&path)).and_then(|mut f| f.write_all(script.as_bytes()));
+    match wrote {
+        Ok(()) => crate::services::open(&path.to_string_lossy()),
+        Err(e) => crate::pwarn!("usage: claude: sign-in script not written ({e})"),
+    }
+}
+
 /// One keychain item, through the Mac's reader (`services::keychain`), which
 /// keeps macOS's prompt in hand itself: at most once per opening of the tab,
 /// never from the background, a Deny kept until Refresh.
@@ -832,6 +927,40 @@ fn keychain_item(service: &str, account: Option<&str>) -> Got {
 /// Windows has no keychain.
 #[cfg(not(target_os = "macos"))]
 fn keychain_item(_service: &str, _account: Option<&str>) -> Got {
+    Got::Missing
+}
+
+/// One of the programs a reader may run (`studio_usage::Cli`; the Mac's
+/// `services::agy` does it). A program that asked for a browser sign-in
+/// answers 401 and is not run again until Refresh (`held`): the reader hears
+/// 401 meanwhile, as if it had run.
+#[cfg(target_os = "macos")]
+fn run_program(cli: Cli, dirs: &Dirs, held: &mut bool) -> Result<Reply, NetFail> {
+    if *held {
+        return Ok(Reply { status: 401, body: String::new(), retry_after_s: None });
+    }
+    let answer = crate::services::agy::run(cli, &dirs.home);
+    if matches!(&answer, Ok(r) if r.status == 401) {
+        *held = true;
+    }
+    answer
+}
+
+/// Windows runs no program for the AI tab yet.
+#[cfg(not(target_os = "macos"))]
+fn run_program(_cli: Cli, _dirs: &Dirs, _held: &mut bool) -> Result<Reply, NetFail> {
+    Err(NetFail::Other("no program to run".into()))
+}
+
+/// What an Electron app sealed, opened by Windows ([`Want::Unseal`]).
+#[cfg(windows)]
+fn unseal(sealed: &[u8], key: Option<&[u8]>) -> Got {
+    crate::services::secret::open_electron(sealed, key).and_then(|b| String::from_utf8(b).ok()).map_or(Got::Missing, Got::Text)
+}
+
+/// A Mac opens them itself, with the keychain's password.
+#[cfg(not(windows))]
+fn unseal(_sealed: &[u8], _key: Option<&[u8]>) -> Got {
     Got::Missing
 }
 

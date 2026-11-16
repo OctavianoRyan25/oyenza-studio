@@ -10,6 +10,7 @@
 //! files, saving, …).
 
 pub mod addons;
+pub mod caffeine;
 pub mod card;
 pub mod downloads;
 pub mod downloads_offer;
@@ -63,7 +64,7 @@ pub enum PageKind {
     Tasks,
     Focus,
     /// AI usage: how much of each AI coding plan is left (`pages::usage`).
-    /// A core tab, always in the row.
+    /// Part of Studio Pro: in the row with it, until switched off.
     Ai,
     /// Oyenza, with Oyen himself as its tab (`oyen::tab`): signed out, the
     /// way to sign in; signed in, the money by day.
@@ -92,10 +93,12 @@ pub enum PageKind {
     Stocks,
     /// Workout reminders from the user's reminder server, while the add-on is on.
     Reminders,
+    /// The day's caffeine, while the Caffeine add-on is on ([`tabs`]).
+    Caffeine,
     /// Links to save as video or sound, while the Downloader add-on is on ([`tabs`]).
     Downloads,
-    /// Which apps' notifications show on the island, while the
-    /// Notifications add-on is on ([`tabs`]; Windows only).
+    /// Which apps' notifications show on the island, while Notifications is
+    /// on ([`tabs`]; Windows' Store copy only).
     Notifications,
     /// The "+" at the end of the tab row: features to switch on, each of
     /// which downloads only then (`poni_core::addons`).
@@ -107,7 +110,7 @@ pub enum PageKind {
 impl PageKind {
     /// The tab row's order: the island's own pages, Oyenza, then the
     /// add-ons' pages and the "+".
-    pub const ALL: [PageKind; 20] = [
+    pub const ALL: [PageKind; 21] = [
         PageKind::Media,
         PageKind::Today,
         PageKind::Shelf,
@@ -123,6 +126,7 @@ impl PageKind {
         PageKind::Record,
         PageKind::Prayer,
         PageKind::Stocks,
+        PageKind::Caffeine,
         PageKind::Downloads,
         PageKind::Notifications,
         PageKind::Reminders,
@@ -148,6 +152,7 @@ impl PageKind {
             PageKind::Prayer => "prayer",
             PageKind::Stocks => "stocks",
             PageKind::Reminders => "reminders",
+            PageKind::Caffeine => "caffeine",
             PageKind::Downloads => "downloads",
             PageKind::Notifications => "notifications",
             PageKind::Addons => "addons",
@@ -179,6 +184,7 @@ impl PageKind {
             PageKind::Prayer => "Prayer",
             PageKind::Stocks => "Stocks",
             PageKind::Reminders => "Reminders",
+            PageKind::Caffeine => "Caffeine",
             PageKind::Downloads => "Downloads",
             PageKind::Notifications => "Notifications",
             PageKind::Addons => "Add-ons",
@@ -204,6 +210,7 @@ impl PageKind {
             PageKind::Prayer => Icon::Moon,
             PageKind::Stocks => Icon::Stocks,
             PageKind::Reminders => Icon::Clock,
+            PageKind::Caffeine => Icon::Coffee,
             PageKind::Downloads => Icon::Download,
             PageKind::Notifications => Icon::Bell,
             PageKind::Addons => Icon::Addons,
@@ -226,29 +233,46 @@ impl PageKind {
         self != PageKind::Settings
     }
 
-    /// The island's own pages, which Settings can take off the row. AI and
-    /// Oyenza stay; the add-ons' pages come and go with their switches.
-    pub const HIDEABLE: [PageKind; 5] = [PageKind::Media, PageKind::Today, PageKind::Shelf, PageKind::Tasks, PageKind::Focus];
+    /// The island's own pages, which Settings can take off the row, and
+    /// Notifications, which goes off with its tab (it's offered only where
+    /// the copy can read notifications). Oyenza stays; the add-ons' pages come
+    /// and go with their switches, AI's with Studio Pro.
+    pub const HIDEABLE: [PageKind; 6] = [PageKind::Media, PageKind::Today, PageKind::Shelf, PageKind::Tasks, PageKind::Focus, PageKind::Notifications];
 
     pub fn hideable(self) -> bool {
         Self::HIDEABLE.contains(&self)
     }
 }
 
-/// The tabs in the header: every page but Settings, and Health, IELTS, Notes,
-/// System, Script, Record, Prayer, Stocks and Notifications only while their
-/// add-ons are on. Music, Today, Shelf, Tasks and Focus unless Settings took
-/// them off the row; one of those still shows while its page is open (a file
-/// dropped on the island opens the Shelf). AI and Oyenza are always there
+/// The tabs in the header: every page but Settings, AI only with Studio Pro,
+/// and Health, IELTS, Notes,
+/// System, Script, Record, Prayer and Stocks only while their add-ons are on.
+/// Music, Today, Shelf, Tasks and Focus unless Settings took them off the
+/// row; one of those still shows while its page is open (a file dropped on
+/// the island opens the Shelf). Notifications wherever the copy can read
+/// them, unless Settings switched it off. AI and Oyenza are always there
 /// (signed out, Oyenza is where to sign in). Add-ons is last, in both apps.
 pub fn tabs(st: &AppState) -> Vec<PageKind> {
     row(st, Some(st.page))
 }
 
+/// The tabs Settings can switch off in this copy (its tabs row, and Tabs in
+/// the Settings window): the island's own pages, and Notifications, the
+/// last of [`PageKind::HIDEABLE`], only where the copy can read them
+/// (`AppState::notify_can`).
+pub fn hideable_tabs(st: &AppState) -> &'static [PageKind] {
+    let all = &PageKind::HIDEABLE;
+    if st.notify_can {
+        all
+    } else {
+        &all[..all.len() - 1]
+    }
+}
+
 /// Where the island goes when its page leaves the row (an add-on switched
 /// off, a tab hidden): the first tab, Music unless it's hidden.
 pub fn first_tab(st: &AppState) -> PageKind {
-    // Never empty: AI, Oyenza and Add-ons always have tabs.
+    // Never empty: Oyenza and Add-ons always have tabs.
     row(st, None)[0]
 }
 
@@ -259,11 +283,13 @@ fn row(st: &AppState, open: Option<PageKind>) -> Vec<PageKind> {
             PageKind::Health => st.health_on(),
             PageKind::Ielts => st.ielts_on(),
             PageKind::Notes => st.notes_on(),
+            PageKind::Ai => st.ai_usage_on(),
             PageKind::System => st.system_on(),
             PageKind::Prayer => st.prayer_on(),
             PageKind::Script => st.script_on(),
             PageKind::Stocks => st.stocks_on(),
             PageKind::Reminders => st.reminders_on(),
+            PageKind::Caffeine => st.caffeine_on(),
             PageKind::Downloads => st.downloader_on(),
             PageKind::Record => st.record_on(),
             PageKind::Notifications => st.notifications_on(),
@@ -299,6 +325,7 @@ pub fn content_height(p: PageKind, st: &AppState) -> f32 {
         PageKind::Prayer => prayer::height(st),
         PageKind::Stocks => stocks::height(st),
         PageKind::Reminders => reminders::height(st),
+        PageKind::Caffeine => caffeine::height(st),
         PageKind::Downloads => downloads::height(st),
         PageKind::Notifications => notifications::height(st),
         PageKind::Addons => addons::height(st),
@@ -383,6 +410,7 @@ pub(crate) fn content_area(body: Rect) -> Rect {
 /// the new one fades in. Every theme's frame draws its pages with this, so
 /// a switch moves the same in all of them.
 pub(crate) fn draw_pages(ui: &mut Ui, st: &mut AppState, body: Rect, header: Rect, page: PageKind, tr: Option<PageTransition>) {
+    caffeine::put_away(ui, st);
     let area = content_area(body);
     // Content may reach a little above `area` (text boxes whose cap height,
     // not their line box, sits on the content top) but never into the tabs.
@@ -441,6 +469,7 @@ pub(crate) fn draw_page(ui: &mut Ui, st: &mut AppState, area: Rect, page: PageKi
         PageKind::Prayer => prayer::draw(ui, st, area),
         PageKind::Stocks => stocks::draw(ui, st, area),
         PageKind::Reminders => reminders::draw(ui, st, area),
+        PageKind::Caffeine => caffeine::draw(ui, st, area),
         PageKind::Downloads => downloads::draw(ui, st, area),
         PageKind::Notifications => notifications::draw(ui, st, area),
         PageKind::Addons => addons::draw(ui, st, area),
@@ -750,12 +779,14 @@ mod tests {
 
     #[test]
     fn the_row_is_the_island_s_own_pages_then_oyenza_then_the_plus() {
-        // Music, then Today beside it; Focus where Today was; AI after it;
-        // Oyenza last, signed in or not.
+        // Music, then Today beside it; Focus where Today was; AI after it,
+        // with Studio Pro; Oyenza last, signed in or not.
         use PageKind::*;
         let mut st = state();
-        assert_eq!(tabs(&st), [Media, Today, Shelf, Tasks, Focus, Ai, Oyenza, Addons]);
+        assert_eq!(tabs(&st), [Media, Today, Shelf, Tasks, Focus, Oyenza, Addons]);
         st.oyenza.link = OyenzaLink::Connected { account: "a•••@example.com".into() };
+        assert_eq!(tabs(&st), [Media, Today, Shelf, Tasks, Focus, Oyenza, Addons]);
+        st.oyenza.pro = Some(true);
         assert_eq!(tabs(&st), [Media, Today, Shelf, Tasks, Focus, Ai, Oyenza, Addons]);
         // The add-ons' pages come after Oyenza (Health, Oyenza's steps, first), before the "+".
         for id in ["system", "script", "health"] {
@@ -772,21 +803,21 @@ mod tests {
         let mut st = state();
         st.settings.hidden_tabs = vec!["today".into(), "tasks".into(), "oyenza".into(), "addons".into()];
         st.page = Focus;
-        // AI, Oyenza and the "+" can't be hidden.
-        assert_eq!(tabs(&st), [Media, Shelf, Focus, Ai, Oyenza, Addons]);
+        // Oyenza and the "+" can't be hidden.
+        assert_eq!(tabs(&st), [Media, Shelf, Focus, Oyenza, Addons]);
         assert_eq!(first_tab(&st), Media);
         // Opened from elsewhere (a meeting's notice opens Today): its tab
         // shows while it's open, and stepping on leaves it behind.
         st.page = Today;
-        assert_eq!(tabs(&st), [Media, Today, Shelf, Focus, Ai, Oyenza, Addons]);
+        assert_eq!(tabs(&st), [Media, Today, Shelf, Focus, Oyenza, Addons]);
         st.page = step_tab(Today, &st, true);
         assert_eq!(st.page, Shelf);
         assert!(!tabs(&st).contains(&Today));
-        // Every one of them hidden: the island opens on AI.
+        // Every one of them hidden: the island opens on Oyenza.
         st.settings.hidden_tabs = PageKind::HIDEABLE.iter().map(|p| p.key().to_string()).collect();
-        st.page = Ai;
-        assert_eq!(tabs(&st), [Ai, Oyenza, Addons]);
-        assert_eq!(first_tab(&st), Ai);
+        st.page = Oyenza;
+        assert_eq!(tabs(&st), [Oyenza, Addons]);
+        assert_eq!(first_tab(&st), Oyenza);
         // A start on a hidden page opens on the first tab instead.
         let mut settings = poni_core::settings::Settings::default();
         settings.start_page = "today".into();
@@ -829,6 +860,7 @@ mod tests {
         assert!(content_height(PageKind::Addons, &st) <= content_height(PageKind::System, &st));
         assert!(content_height(PageKind::Stocks, &st) <= content_height(PageKind::System, &st));
         assert!(content_height(PageKind::Reminders, &st) <= content_height(PageKind::System, &st));
+        assert!(content_height(PageKind::Caffeine, &st) <= content_height(PageKind::System, &st));
         // Notifications with as many apps as it lists.
         for i in 0..poni_core::notifications::MAX_APPS {
             st.settings.notifications.remember(&format!("App.{i}"), &format!("App {i}"));
@@ -843,13 +875,21 @@ mod tests {
     }
 
     #[test]
-    fn ai_is_always_a_tab_and_never_makes_the_window_taller() {
-        let st = state();
-        assert!(tabs(&st).contains(&PageKind::Ai), "a core tab: no add-on to switch on");
+    fn ai_has_a_tab_only_with_studio_pro_and_never_makes_the_window_taller() {
+        let mut st = state();
+        assert!(!tabs(&st).contains(&PageKind::Ai), "signed out");
+        st.oyenza.link = OyenzaLink::Connected { account: "a\u{2022}\u{2022}\u{2022}@example.com".into() };
+        assert!(!tabs(&st).contains(&PageKind::Ai), "before the server's answer");
+        st.oyenza.pro = Some(false);
+        assert!(!tabs(&st).contains(&PageKind::Ai), "an account without Pro");
+        st.oyenza.pro = Some(true);
+        assert!(tabs(&st).contains(&PageKind::Ai), "on with Pro, nothing to switch on");
+        st.settings.set_addon(poni_core::addons::AI_USAGE.id, false);
+        assert!(!tabs(&st).contains(&PageKind::Ai), "switched off under Add-ons");
         assert_eq!(PageKind::from_key("ai"), PageKind::Ai);
-        // An island last open on the AI tab opens there again.
+        // Pro isn't known yet at start: an island last open on the AI tab opens on the first tab.
         let store = Store { last_page: "ai".into(), ..Store::default() };
-        assert_eq!(AppState::new(Settings { remember_page: true, ..Settings::default() }, store).page, PageKind::Ai);
+        assert_eq!(AppState::new(Settings { remember_page: true, ..Settings::default() }, store).page, PageKind::ALL[0]);
         assert!(content_height(PageKind::Ai, &st) <= content_height(PageKind::System, &st));
     }
 
@@ -860,6 +900,7 @@ mod tests {
             (PageKind::Health, poni_core::addons::HEALTH),
             (PageKind::Stocks, poni_core::addons::STOCKS),
             (PageKind::Reminders, poni_core::addons::REMINDERS),
+            (PageKind::Caffeine, poni_core::addons::CAFFEINE),
         ] {
             let mut st = state();
             assert!(!tabs(&st).contains(&page), "{} is off for everyone until switched on", addon.id);
@@ -876,12 +917,25 @@ mod tests {
     }
 
     #[test]
-    fn downloads_has_a_tab_only_with_studio_pro() {
-        // Notifications is free (Luca, 28 Oct): its tab needs no sign-in.
+    fn notifications_is_on_wherever_the_copy_can_read_them_until_switched_off() {
+        // The download can't read other apps' notifications: no tab, nothing listens.
         let mut st = state();
-        st.settings.set_addon(poni_core::addons::NOTIFICATIONS.id, true);
-        st.addons.insert(poni_core::addons::NOTIFICATIONS.id, poni_core::addons::Status::Ready);
-        assert_eq!(tabs(&st).contains(&PageKind::Notifications), cfg!(windows), "signed out, no Pro");
+        assert!(!st.notifications_on() && !tabs(&st).contains(&PageKind::Notifications));
+        assert_eq!(hideable_tabs(&st), &PageKind::HIDEABLE[..5], "Settings doesn't offer it");
+        // The Store copy: on for everyone, without an add-on to switch on.
+        st.notify_can = true;
+        assert!(st.notifications_on() && tabs(&st).contains(&PageKind::Notifications));
+        assert_eq!(hideable_tabs(&st).last(), Some(&PageKind::Notifications));
+        // Its chip in Settings' tabs row switches it off, tab and all, even
+        // while its page is open.
+        st.settings.hidden_tabs = vec!["notifications".into()];
+        st.page = PageKind::Notifications;
+        assert!(!st.notifications_on() && !tabs(&st).contains(&PageKind::Notifications));
+        assert_eq!(first_tab(&st), PageKind::Media);
+    }
+
+    #[test]
+    fn downloads_has_a_tab_only_with_studio_pro() {
         for (page, addon) in [(PageKind::Downloads, poni_core::addons::DOWNLOADER)] {
             let mut st = state();
             st.downloader_offered = true;
@@ -945,7 +999,7 @@ mod tests {
         assert!(!tabs(&st).contains(&Ielts), "off for everyone until switched on");
         st.addons.insert("ielts", poni_core::addons::Status::Ready);
         st.addons.insert("health", poni_core::addons::Status::Ready);
-        assert_eq!(&tabs(&st)[6..], [Oyenza, Health, Ielts, Addons]);
+        assert_eq!(&tabs(&st)[5..], [Oyenza, Health, Ielts, Addons]);
         // Signed out it shows the sign-in card; signed in, every state is as
         // tall, and never taller than System: the window keeps its size.
         let signed_out = content_height(Ielts, &st);

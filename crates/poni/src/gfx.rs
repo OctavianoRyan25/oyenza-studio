@@ -1807,6 +1807,23 @@ impl<'a> Canvas<'a> {
         }
     }
 
+    /// Fill a path with a vertical gradient through `stops` (where between
+    /// `y0` and `y1`, 0 to 1, and the colour there); above `y0` and below
+    /// `y1` the end colours carry on. Give it opaque colours: Wine's
+    /// Direct2D adds a part-transparent stop's colour unpremultiplied (so a
+    /// fade to clear white paints white), and the self-test runs there.
+    pub fn fill_path_stops(&mut self, segs: &[Seg], y0: f32, y1: f32, stops: &[(f32, Color)]) {
+        let Ok(geo) = self.g.path_geometry(segs, true) else { return };
+        let stops: Vec<D2D1_GRADIENT_STOP> = stops.iter().map(|&(position, c)| D2D1_GRADIENT_STOP { position, color: d2d_color(self.g.look.paint(c)) }).collect();
+        unsafe {
+            let Ok(coll) = self.g.rt.CreateGradientStopCollection(&stops, D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP) else { return };
+            let props = D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES { startPoint: pt(0.0, y0), endPoint: pt(0.0, y1) };
+            let Ok(brush) = self.g.rt.CreateLinearGradientBrush(&props, None, &coll) else { return };
+            brush.SetOpacity(self.alpha);
+            self.g.rt.FillGeometry(&geo, &brush, None);
+        }
+    }
+
     /// A soft shadow round the rounded rectangle `r` (corner `radius`): `c`
     /// at the opacity `ramp` gives by distance from the edge (DIPs, negative
     /// inside, in order), from its first stop inside the edge to its last
@@ -1961,6 +1978,18 @@ impl<'a> Canvas<'a> {
 
     /// Draw an image cover-fitted into `r` with rounded corners.
     pub fn image(&mut self, img: &Image, r: Rect, radius: f32) {
+        self.image_as(img, r, radius, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+    }
+
+    /// Draw an image that was painted for exactly the pixels `r` covers
+    /// (the Diorama theme's picture), each pixel as it is. `image` smooths
+    /// between pixels, which a GPU does a hair off even at one to one;
+    /// pixel art must not be smoothed at all. `r` sits on whole pixels.
+    pub fn image_exact(&mut self, img: &Image, r: Rect, radius: f32) {
+        self.image_as(img, r, radius, D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
+    }
+
+    fn image_as(&mut self, img: &Image, r: Rect, radius: f32, interpolation: D2D1_BITMAP_INTERPOLATION_MODE) {
         if img.width == 0 || img.height == 0 || r.w <= 0.0 || r.h <= 0.0 {
             return;
         }
@@ -1969,7 +1998,7 @@ impl<'a> Canvas<'a> {
             let props = D2D1_BITMAP_BRUSH_PROPERTIES {
                 extendModeX: D2D1_EXTEND_MODE_CLAMP,
                 extendModeY: D2D1_EXTEND_MODE_CLAMP,
-                interpolationMode: D2D1_BITMAP_INTERPOLATION_MODE_LINEAR,
+                interpolationMode: interpolation,
             };
             let Ok(brush) = self.g.rt.CreateBitmapBrush(&bmp, Some(&props), None) else { return };
             // Bitmaps are created at 96 DPI so their DIP size equals pixel size.
@@ -1983,6 +2012,13 @@ impl<'a> Canvas<'a> {
             let rr = D2D1_ROUNDED_RECT { rect: rectf(r), radiusX: radius, radiusY: radius };
             self.g.rt.FillRoundedRectangle(&rr, &brush);
         }
+    }
+
+    /// Let go of the renderer's copy of `img`. For a picture that is painted
+    /// anew now and then (the Diorama theme's pill), so the copies of its
+    /// earlier paintings don't wait in the cache for its next sweep.
+    pub fn forget_image(&mut self, img: &Image) {
+        self.g.bitmaps.remove(&img.id);
     }
 
     /// Draw a vector icon (24×24 design grid) scaled into `r`.

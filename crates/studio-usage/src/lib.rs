@@ -11,8 +11,9 @@
 //!    person typed into Oyenza Studio. The app reads them ([`Got`]).
 //! 2. [`Provider::next`], called with what was read and the answers so far:
 //!    either a request to make ([`Step::Fetch`], at most [`MAX_FETCHES`] a
-//!    refresh) or the result ([`Step::Done`]): a [`Snapshot`] or why there
-//!    is none ([`Trouble`]).
+//!    refresh), a program to run ([`Step::Run`], at most [`MAX_RUNS`], for a
+//!    service whose numbers only its own command line gets) or the result
+//!    ([`Step::Done`]): a [`Snapshot`] or why there is none ([`Trouble`]).
 //!
 //! The apps' `services::usage` (one file, the Windows app's, which the Mac
 //! app runs too) does the reading and the HTTP on one worker thread, only
@@ -36,6 +37,7 @@ use serde_json::Value;
 use std::path::{Path, PathBuf};
 
 pub mod alerts;
+pub mod antigravity;
 pub mod claude;
 pub mod codex;
 pub mod copilot;
@@ -47,10 +49,13 @@ pub mod opencode;
 pub mod openrouter;
 pub mod oyenza;
 pub mod pace;
+pub mod safe_storage;
 pub mod zai;
 
 /// The most requests one refresh of one service makes.
 pub const MAX_FETCHES: usize = 4;
+/// The most programs one refresh of one service runs ([`Step::Run`]).
+pub const MAX_RUNS: usize = 2;
 /// The most wants one refresh of one service reads: [`Provider::wants`] and
 /// every [`Step::Read`] together.
 pub const MAX_READS: usize = 64;
@@ -67,6 +72,8 @@ pub enum ProviderId {
     Claude,
     OpenCode,
     Gemini,
+    /// Google's Antigravity CLI (`agy`), which took over from Gemini CLI.
+    Antigravity,
     Cursor,
     Copilot,
     Kimi,
@@ -78,11 +85,12 @@ pub enum ProviderId {
 }
 
 impl ProviderId {
-    pub const ALL: [ProviderId; 11] = [
+    pub const ALL: [ProviderId; 12] = [
         ProviderId::Codex,
         ProviderId::Claude,
         ProviderId::OpenCode,
         ProviderId::Gemini,
+        ProviderId::Antigravity,
         ProviderId::Cursor,
         ProviderId::Copilot,
         ProviderId::Kimi,
@@ -99,6 +107,7 @@ impl ProviderId {
             ProviderId::Claude => "claude",
             ProviderId::OpenCode => "opencode",
             ProviderId::Gemini => "gemini",
+            ProviderId::Antigravity => "antigravity",
             ProviderId::Cursor => "cursor",
             ProviderId::Copilot => "copilot",
             ProviderId::Kimi => "kimi",
@@ -116,6 +125,7 @@ impl ProviderId {
             ProviderId::Claude => "Claude Code",
             ProviderId::OpenCode => "OpenCode Go",
             ProviderId::Gemini => "Gemini CLI",
+            ProviderId::Antigravity => "Antigravity",
             ProviderId::Cursor => "Cursor",
             ProviderId::Copilot => "GitHub Copilot",
             ProviderId::Kimi => "Kimi Code",
@@ -246,6 +256,12 @@ pub enum Want {
     /// writing it), caps a piece at 4 MiB and never keeps pieces between
     /// refreshes.
     Range { path: PathBuf, offset: u64, len: u32 },
+    /// Windows: bytes an Electron app sealed with `safeStorage`, opened by
+    /// Windows ([`safe_storage`]): `v10` bytes with `key` (its DPAPI blob
+    /// from the app's `Local State`) through AES-GCM, anything else as a
+    /// DPAPI blob alone. [`Got::Text`] with what was in them, [`Got::Missing`]
+    /// if they don't open or aren't text. A Mac answers [`Got::Missing`].
+    Unseal { sealed: safe_storage::Sealed, key: Option<safe_storage::Sealed> },
 }
 
 impl Want {
@@ -429,7 +445,28 @@ pub enum Step {
     /// again with the same replies. Fine with [`Reach::Local`]. At most
     /// [`MAX_READS`] wants a refresh, the first ones included.
     Read(Vec<Want>),
+    /// Run one of the programs in [`Cli`] and ask again with its answer
+    /// appended to the replies, as for [`Step::Fetch`] (at most [`MAX_RUNS`] a
+    /// refresh; not with [`Reach::Local`]). The answer is a [`Reply`]:
+    /// status 200 and the program's output if it exited 0; 401 if it needs the
+    /// person to sign in (nothing was run, or it was stopped); another status
+    /// if it failed. `Err(NetFail::Other)` if it isn't installed,
+    /// `Err(NetFail::Timeout)` if it did not finish in time.
+    Run(Cli),
     Done(Outcome),
+}
+
+/// The programs on this computer a reader may ask the app to run. A fixed
+/// list: the app knows where each one lives and with what arguments to start
+/// it, so a reader can't run anything else. Each is another app's own
+/// command line, run for a number the service gives to its own app only.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Cli {
+    /// Antigravity's `agy --version`: starts in a moment, spends no quota.
+    AgyVersion,
+    /// Antigravity's `agy -p /usage --output-format json`: answers its quota
+    /// itself, with no model turn.
+    AgyUsage,
 }
 
 pub type Outcome = Result<Snapshot, Trouble>;
@@ -457,6 +494,15 @@ pub trait Provider: Sync {
         120
     }
 
+    /// The service gets its numbers by running a program ([`Step::Run`]),
+    /// which costs far more than a request: the worker runs it only for the
+    /// person looking at the tab (or pressing Refresh), never for the
+    /// notices alone, which read only what is there, and after the services
+    /// that don't, so their cards don't wait for it.
+    fn runs_programs(&self) -> bool {
+        false
+    }
+
     /// The service needs a key typed into Oyenza Studio ([`Want::Secret`]);
     /// the tab then offers a field for it.
     fn takes_key(&self) -> Option<KeyAsk> {
@@ -476,12 +522,13 @@ pub struct KeyAsk {
 }
 
 /// Every service, in [`ProviderId::ALL`] order.
-pub fn all() -> [&'static dyn Provider; 11] {
+pub fn all() -> [&'static dyn Provider; 12] {
     [
         &codex::Codex,
         &claude::Claude,
         &opencode::OpenCode,
         &gemini::Gemini,
+        &antigravity::Antigravity,
         &cursor::Cursor,
         &copilot::Copilot,
         &kimi::Kimi,
@@ -500,7 +547,7 @@ pub fn provider(id: ProviderId) -> &'static dyn Provider {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Snapshot {
     pub provider: ProviderId,
-    /// "Plus", "Pro", "Max 20x", "Go", ...
+    /// "Plus", "Pro", "Ultra 10x", "Go", ...
     pub plan: Option<String>,
     /// Who is signed in, already masked ([`mask_email`]).
     pub account: Option<String>,
@@ -874,12 +921,37 @@ pub fn drive(p: &dyn Provider, cx: &Ctx, answer: impl FnMut(&Request) -> Result<
 
 /// [`drive`], with `read` answering each [`Step::Read`] want.
 #[cfg(test)]
-pub fn drive_reads(p: &dyn Provider, cx: &Ctx, mut read: impl FnMut(&Want) -> Got, mut answer: impl FnMut(&Request) -> Result<Reply, NetFail>) -> (Vec<Request>, Outcome) {
-    let (mut asked, mut replies, mut got) = (Vec::new(), Vec::new(), cx.got.to_vec());
+pub fn drive_reads(p: &dyn Provider, cx: &Ctx, read: impl FnMut(&Want) -> Got, answer: impl FnMut(&Request) -> Result<Reply, NetFail>) -> (Vec<Request>, Outcome) {
+    let (asked, _, out) = drive_all(p, cx, read, answer, |c| panic!("{:?} ran {c:?}", p.id()));
+    (asked, out)
+}
+
+/// [`drive`] for a service that runs programs: `run` answers each
+/// [`Step::Run`]. Returns the requests made, the programs run and the outcome.
+#[cfg(test)]
+pub fn drive_runs(p: &dyn Provider, cx: &Ctx, run: impl FnMut(Cli) -> Result<Reply, NetFail>) -> (Vec<Request>, Vec<Cli>, Outcome) {
+    drive_all(p, cx, |_| Got::Missing, |r| panic!("{:?} asked {}", p.id(), r.url), run)
+}
+
+#[cfg(test)]
+fn drive_all(
+    p: &dyn Provider,
+    cx: &Ctx,
+    mut read: impl FnMut(&Want) -> Got,
+    mut answer: impl FnMut(&Request) -> Result<Reply, NetFail>,
+    mut run: impl FnMut(Cli) -> Result<Reply, NetFail>,
+) -> (Vec<Request>, Vec<Cli>, Outcome) {
+    let (mut asked, mut ran, mut replies, mut got) = (Vec::new(), Vec::new(), Vec::new(), cx.got.to_vec());
     loop {
         let now = Ctx { dirs: cx.dirs, got: &got, now: cx.now, reach: cx.reach };
         match p.next(&now, &replies) {
-            Step::Done(out) => return (asked, out),
+            Step::Done(out) => return (asked, ran, out),
+            Step::Run(cli) => {
+                assert!(cx.reach == Reach::Online, "{:?} ran {cli:?} under Reach::Local", p.id());
+                assert!(ran.len() < MAX_RUNS, "{:?} ran more than {MAX_RUNS} programs", p.id());
+                replies.push(run(cli));
+                ran.push(cli);
+            }
             Step::Read(wants) => {
                 assert!(got.len() + wants.len() <= MAX_READS, "{:?} read more than {MAX_READS} wants", p.id());
                 got.extend(wants.iter().map(&mut read));

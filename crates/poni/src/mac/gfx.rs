@@ -887,6 +887,33 @@ impl<'a> Canvas<'a> {
         CGContext::restore_g_state(self.cg());
     }
 
+    /// Fill a path with a vertical gradient through `stops` (where between
+    /// `y0` and `y1`, 0 to 1, and the colour there); above `y0` and below
+    /// `y1` the end colours carry on, as Direct2D's gradient brush does on
+    /// Windows.
+    pub fn fill_path_stops(&mut self, segs: &[Seg], y0: f32, y1: f32, stops: &[(f32, Color)]) {
+        let n = stops.len().min(8);
+        if n < 2 {
+            return;
+        }
+        let mut comps: [CGFloat; 32] = [0.0; 32];
+        let mut at: [CGFloat; 8] = [0.0; 8];
+        for (k, &(t, c)) in stops.iter().take(n).enumerate() {
+            comps[k * 4..k * 4 + 4].copy_from_slice(&self.components(self.g.look.paint(c)));
+            at[k] = t as CGFloat;
+        }
+        let Some(grad) = (unsafe { CGGradient::with_color_components(Some(&self.g.srgb), comps.as_ptr(), at.as_ptr(), n) }) else { return };
+        CGContext::save_g_state(self.cg());
+        let p = cg_path(segs);
+        CGContext::begin_path(self.cg());
+        CGContext::add_path(self.cg(), Some(&p));
+        CGContext::clip(self.cg());
+        let (from, to) = (CGPoint { x: 0.0, y: y0 as CGFloat }, CGPoint { x: 0.0, y: y1 as CGFloat });
+        let extend = CGGradientDrawingOptions::DrawsBeforeStartLocation | CGGradientDrawingOptions::DrawsAfterEndLocation;
+        CGContext::draw_linear_gradient(self.cg(), Some(&grad), from, to, extend);
+        CGContext::restore_g_state(self.cg());
+    }
+
     /// A soft shadow round the rounded rectangle `r` (corner `radius`): `c`
     /// at the opacity `ramp` gives by distance from the edge (DIPs, negative
     /// inside, in order), from its first stop inside the edge to its last
@@ -1026,6 +1053,17 @@ impl<'a> Canvas<'a> {
 
     /// Draw an image cover-fitted into `r` with rounded corners.
     pub fn image(&mut self, img: &Image, r: Rect, radius: f32) {
+        self.image_as(img, r, radius, false);
+    }
+
+    /// Draw an image that was painted for exactly the pixels `r` covers
+    /// (the Diorama theme's picture), each pixel as it is: pixel art must
+    /// not be smoothed. `r` sits on whole pixels.
+    pub fn image_exact(&mut self, img: &Image, r: Rect, radius: f32) {
+        self.image_as(img, r, radius, true);
+    }
+
+    fn image_as(&mut self, img: &Image, r: Rect, radius: f32, exact: bool) {
         if img.width == 0 || img.height == 0 || r.w <= 0.0 || r.h <= 0.0 {
             return;
         }
@@ -1040,11 +1078,22 @@ impl<'a> Canvas<'a> {
         self.add_rrect(r, radius);
         CGContext::clip(self.cg());
         CGContext::set_alpha(self.cg(), self.alpha as CGFloat);
+        if exact {
+            // Restored with the graphics state below.
+            CGContext::set_interpolation_quality(self.cg(), CGInterpolationQuality::None);
+        }
         // Images draw bottom-up; flip them back in this y-down space.
         CGContext::translate_ctm(self.cg(), ox as CGFloat, (oy + dh) as CGFloat);
         CGContext::scale_ctm(self.cg(), 1.0, -1.0);
         CGContext::draw_image(self.cg(), cgrect(Rect::new(0.0, 0.0, dw, dh)), Some(&cg));
         CGContext::restore_g_state(self.cg());
+    }
+
+    /// Let go of the renderer's copy of `img`. For a picture that is painted
+    /// anew now and then (the Diorama theme's pill), so the copies of its
+    /// earlier paintings don't wait in the cache for its next sweep.
+    pub fn forget_image(&mut self, img: &Image) {
+        self.g.images.remove(&img.id);
     }
 
     /// Draw a vector icon (24×24 design grid) scaled into `r`.

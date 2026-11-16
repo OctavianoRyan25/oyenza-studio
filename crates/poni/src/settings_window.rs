@@ -1,6 +1,6 @@
 //! The Settings window's content: every setting Oyenza Studio has, in a
 //! sidebar of sections (General, Appearance, Island, Music and lyrics,
-//! Pop-ups, Tabs, Add-ons, Focus, Prayer, AI, Oyenza, About), called
+//! Pop-ups, Tabs, Add-ons, Focus, Prayer, Caffeine, AI, Oyenza, About), called
 //! Advanced settings. The last row of the island's Settings page (behind
 //! the gear) and the menu's Advanced settings… open it, in a window of its
 //! own: on Windows a borderless one (`settings_host.rs`), on the Mac a real
@@ -20,7 +20,7 @@
 //! which turns the island's white ink dark on the light window.
 
 use crate::commands::Command;
-use crate::gfx::{Canvas, TextStyle, Weight};
+use crate::gfx::{Canvas, Image, ImageData, TextStyle, Weight};
 use crate::icons::Icon;
 use crate::pages::settings::picker_width;
 use crate::pages::PageKind;
@@ -28,8 +28,10 @@ use crate::pill::status;
 use crate::state::AppState;
 use crate::ui::{wid, wid_n, CursorKind, Hit, Input, MouseButton, PillStyle, Ui, PILL_GAP, PILL_SMALL};
 use crate::version::VERSION;
+use poni_core::caffeine;
 use poni_core::geom::{palette, Color, Point, Rect};
-use poni_core::settings::{IdleStyle, MonitorChoice, PrayerSound, Theme};
+use poni_core::settings::{IdleStyle, MonitorChoice, PrayerFollow, PrayerSound, Theme};
+use std::cell::RefCell;
 use std::collections::HashMap;
 
 /// The card, in DIPs. Windows' window gives it room for its shadow and is
@@ -65,10 +67,39 @@ const SEG_PAD: f32 = 11.0;
 const KNOB_INSET: f32 = 2.0;
 const STEP_BTN: f32 = 26.0;
 const STEP_VALUE_W: f32 = 84.0;
-/// The Appearance section's theme cards.
+/// The Appearance section's theme cards: three to a row, each a column of
+/// the content wide, so the rows end where the groups under them do.
+const THEME_COLS: usize = 3;
 const THEME_CARD_H: f32 = 154.0;
 const THEME_PREVIEW_H: f32 = 74.0;
 const THEME_GAP: f32 = 12.0;
+/// A card's line of words wraps at this measure, not at the card's width:
+/// here the longer lines break into two fuller ones, where the whole width
+/// leaves one word alone on the second.
+const THEME_LINE_W: f32 = 108.0;
+/// On the cards' little screens, Pill's capsule floats this far below the
+/// top edge.
+const THEME_FLOAT: f32 = 7.0;
+/// Diorama's picture floats nearer the edge: it is drawn at its own size,
+/// pixel for pixel, and is taller than the little capsules beside it.
+const DIORAMA_FLOAT: f32 = 3.0;
+/// The card's picture is the place on a shorter pane than the resting
+/// pill's (`studio_diorama::LONG`), so it fits the little screen at its own
+/// size: the house, the clock, the fence and the tree.
+const DIORAMA_CARD_W: f32 = 120.0;
+/// The Diorama card shows the theme's own picture as it rests on the real
+/// screen: this moment of it, a morning at the 10:08 the other cards' clocks
+/// say, the glass ball on the house.
+const DIORAMA_MOMENT: studio_diorama::Moment = studio_diorama::Moment {
+    minute: 608.0,
+    sunrise: 360.0,
+    sunset: 1080.0,
+    day: 9817,
+    lens: 0.0,
+    clock: Some(studio_diorama::Clock { hour: 10, minute: 8, h24: true }),
+    badge: None,
+    dark: None,
+};
 /// A wheel notch scrolls this far.
 pub const WHEEL_STEP: f32 = 48.0;
 
@@ -124,13 +155,14 @@ pub enum Section {
     Addons,
     Focus,
     Prayer,
+    Caffeine,
     Ai,
     Oyenza,
     About,
 }
 
 impl Section {
-    pub const ALL: [Section; 12] = [
+    pub const ALL: [Section; 13] = [
         Section::General,
         Section::Appearance,
         Section::Island,
@@ -140,6 +172,7 @@ impl Section {
         Section::Addons,
         Section::Focus,
         Section::Prayer,
+        Section::Caffeine,
         Section::Ai,
         Section::Oyenza,
         Section::About,
@@ -156,6 +189,7 @@ impl Section {
             Section::Addons => "Add-ons",
             Section::Focus => "Focus",
             Section::Prayer => "Prayer times",
+            Section::Caffeine => "Caffeine",
             Section::Ai => "AI usage",
             Section::Oyenza => "Oyenza account",
             Section::About => "About",
@@ -174,6 +208,7 @@ impl Section {
             Section::Addons => "addons",
             Section::Focus => "focus",
             Section::Prayer => "prayer",
+            Section::Caffeine => "caffeine",
             Section::Ai => "ai",
             Section::Oyenza => "oyenza",
             Section::About => "about",
@@ -191,6 +226,7 @@ impl Section {
             Section::Addons => Icon::Addons,
             Section::Focus => Icon::Timer,
             Section::Prayer => Icon::Moon,
+            Section::Caffeine => Icon::Coffee,
             Section::Ai => Icon::Ai,
             Section::Oyenza => Icon::Oyenza,
             Section::About => Icon::Gear,
@@ -209,16 +245,20 @@ impl Section {
             Section::Addons => Color::hex(0x0A84FF),
             Section::Focus => palette::ORANGE,
             Section::Prayer => Color::hex(0x30B0A0),
+            Section::Caffeine => Color::hex(0xA2845E),
             Section::Ai => palette::PURPLE,
             Section::Oyenza => palette::ORANGE,
             Section::About => Color::hex(0x8E8E93),
         }
     }
 
-    /// Prayer times has a section only while its add-on is on.
+    /// Prayer times and Caffeine have a section only while their add-ons are
+    /// on, AI usage only with Studio Pro.
     pub fn shown(self, st: &AppState) -> bool {
         match self {
             Section::Prayer => st.prayer_on(),
+            Section::Caffeine => st.caffeine_on(),
+            Section::Ai => st.ai_usage_on(),
             _ => true,
         }
     }
@@ -266,6 +306,12 @@ pub enum Key {
     PrayerCountdown,
     PrayerPause,
     PrayerFollow,
+    PrayerCalendar,
+    CaffeineBedtime,
+    CaffeineHalfLife,
+    CaffeineBedLimit,
+    CaffeineDayLimit,
+    CaffeineRemind,
     AiNotices,
     AiNear,
     SettingsFile,
@@ -310,7 +356,7 @@ pub enum Block {
     Group(Option<&'static str>, Vec<Item>),
     /// This copy's version, Check now, and a new version when there is one.
     Version,
-    /// The four themes as cards with a small picture of each.
+    /// The themes as cards with a small picture of each.
     Themes,
     /// The Oyenza account row (the island's Settings page has the same).
     Account,
@@ -336,11 +382,14 @@ const CLOSE: [(u32, &str); 3] = [(0, "At once"), (400, "Short"), (1000, "Long")]
 const DISPLAYS: [(MonitorChoice, &str); 2] = [(MonitorChoice::Primary, "Main display"), (MonitorChoice::Cursor, "Under the pointer")];
 const FULLSCREEN: [(bool, &str); 2] = [(true, "Hide"), (false, "Stay on top")];
 const SOUNDS: [(PrayerSound, &str); 3] = [(PrayerSound::Adzan, "Adzan"), (PrayerSound::Tone, "Tone"), (PrayerSound::Silent, "Silent")];
-const THEMES: [(Theme, &str, &str); 4] = [
+/// Whose times and Hijri dates (the Prayer page's place picker has the same).
+const FOLLOWS: [(PrayerFollow, &str); 2] = [(PrayerFollow::Kemenag, "Kemenag"), (PrayerFollow::Muhammadiyah, "Muhammadiyah (KHGT)")];
+const THEMES: [(Theme, &str, &str); 5] = [
     (Theme::Classic, "Classic", "A black island at the top edge"),
     (Theme::Oyen, "Oyen", "Oyen lives in the island"),
     (Theme::Glass, "Glass", "Frosted glass over your screen"),
     (Theme::Pill, "Pill", "Floats just below the top edge"),
+    (Theme::Diorama, "Diorama", "A little place that keeps your day"),
 ];
 /// Start with Windows, or at login on a Mac (its menu bar says so).
 const AUTOSTART: (&str, &str) = if cfg!(target_os = "macos") {
@@ -350,6 +399,12 @@ const AUTOSTART: (&str, &str) = if cfg!(target_os = "macos") {
 };
 const WIDTH_STEP: f32 = 20.0;
 const OFFSET_STEP: i32 = 100;
+/// Caffeine's Left at bedtime and Day limit rows: the least, the most and
+/// the step between (mg).
+const BED_LIMIT_MG: (i32, i32, i32) = (10, 80, 5);
+const DAY_LIMIT_MG: (i32, i32, i32) = (100, 1000, 50);
+/// Its Bedtime row goes by quarter hours.
+const BEDTIME_STEP: i32 = 15;
 
 fn chosen<T: PartialEq>(list: &[(T, &str)], v: T) -> Option<usize> {
     list.iter().position(|(x, _)| *x == v)
@@ -382,6 +437,15 @@ fn start_pages(st: &AppState) -> Vec<PageKind> {
 
 fn minutes(m: u32) -> String {
     format!("{m} min")
+}
+
+/// A half-life as Caffeine's row shows it: "5 h", "2.5 h".
+fn half_life_text(h: f32) -> String {
+    if h.fract() == 0.0 {
+        format!("{h:.0} h")
+    } else {
+        format!("{h:.1} h")
+    }
 }
 
 /// The lyrics' shift as people say it.
@@ -469,8 +533,15 @@ pub fn blocks(section: Section, st: &AppState) -> Vec<Block> {
             if !s.remember_page {
                 open.push(item(Key::StartPage, "Opens on", None, Ctl::Stepper(start_name.to_string())));
             }
-            let tabs = PageKind::HIDEABLE.iter().map(|p| item(Key::Tab(*p), p.title(), None, Ctl::Switch(Some(!st.tab_hidden(*p))))).collect();
-            vec![Block::Group(Some("When the island opens"), open), Block::Group(Some("Tabs in the island"), tabs), Block::Note("AI, Oyenza and the add-ons' pages always have a tab.")]
+            // Notifications only in a copy that can read them; off, nothing listens.
+            let tabs = crate::pages::hideable_tabs(st)
+                .iter()
+                .map(|&p| {
+                    let sub = (p == PageKind::Notifications).then_some("Messages from WhatsApp, Telegram and your phone");
+                    item(Key::Tab(p), p.title(), sub, Ctl::Switch(Some(!st.tab_hidden(p))))
+                })
+                .collect();
+            vec![Block::Group(Some("When the island opens"), open), Block::Group(Some("Tabs in the island"), tabs), Block::Note("Oyenza and the add-ons' pages always have a tab.")]
         }
         Section::Addons => vec![Block::Addons],
         Section::Focus => {
@@ -502,7 +573,15 @@ pub fn blocks(section: Section, st: &AppState) -> Vec<Block> {
         Section::Prayer => {
             let p = &s.prayer;
             let countdown = if p.remind_before_min == 0 { "Off".to_string() } else { minutes(p.remind_before_min) };
+            let follow_sub = match p.follow {
+                PrayerFollow::Kemenag => "Kemenag's times, the government's Hijri dates",
+                PrayerFollow::Muhammadiyah => "Majelis Tarjih's times, the KHGT calendar",
+            };
             vec![
+                Block::Group(
+                    Some("Times and Hijri dates"),
+                    vec![item(Key::PrayerCalendar, "Follow", Some(follow_sub), Ctl::Choice(names(&FOLLOWS), chosen(&FOLLOWS, p.follow)))],
+                ),
                 Block::Group(
                     Some("When it's time"),
                     vec![
@@ -522,6 +601,23 @@ pub fn blocks(section: Section, st: &AppState) -> Vec<Block> {
                 rows.push(item(Key::AiNear, "Close to the limit at", None, Ctl::Stepper(format!("{} %", st.usage_near_pct()))));
             }
             vec![Block::Group(None, rows), Block::Note("Services, keys and the Oyenza Inference connect are on the AI tab.")]
+        }
+        Section::Caffeine => {
+            let c = s.caffeine.sane();
+            let remind = format!("On the island, {} minutes before", caffeine::REMIND_BEFORE);
+            vec![
+                Block::Group(
+                    Some("Last call"),
+                    vec![
+                        item(Key::CaffeineBedtime, "Bedtime", Some("When you usually go to sleep"), Ctl::Stepper(caffeine::hhmm(c.bedtime.into()))),
+                        item(Key::CaffeineHalfLife, "Half-life", Some("Most adults: 2 to 10 hours"), Ctl::Stepper(half_life_text(c.half_life))),
+                        item(Key::CaffeineBedLimit, "Left at bedtime", Some("Last call is when more than this of one drink would still be in you at bedtime"), Ctl::Stepper(format!("{} mg", c.bed_limit_mg))),
+                        switch(Key::CaffeineRemind, "Remind me before last call", Some(remind.as_str()), c.remind),
+                    ],
+                ),
+                Block::Group(None, vec![item(Key::CaffeineDayLimit, "Day limit", Some("400 mg a day for healthy adults, 200 mg in pregnancy"), Ctl::Stepper(format!("{} mg", c.day_limit_mg)))]),
+                Block::Note("Add what you drink on the island's Caffeine page."),
+            ]
         }
         Section::Oyenza => vec![Block::Account],
         Section::About => vec![
@@ -563,6 +659,51 @@ pub fn nav_id(st: &AppState, section: Section) -> Option<u64> {
 fn step_min(v: u32, d: i32, lo: u32, hi: u32) -> u32 {
     let by = if (d < 0 && v <= 5) || (d > 0 && v < 5) { 1 } else { 5 };
     (v as i64 + d as i64 * by).clamp(lo as i64, hi as i64) as u32
+}
+
+/// `v` moved `d` steps of `by` along their grid (a value between two goes
+/// to the next one that way), kept to `lo..=hi`.
+fn step_on(v: i32, d: i32, by: i32, lo: i32, hi: i32) -> i32 {
+    let below = v.div_euclid(by) * by;
+    let from = if d == 0 {
+        v
+    } else if d < 0 && below != v {
+        below + by
+    } else {
+        below
+    };
+    (from + d * by).clamp(lo, hi)
+}
+
+/// Milligrams `d` steps along one of Caffeine's mg rows (`BED_LIMIT_MG`, `DAY_LIMIT_MG`).
+fn step_mg(v: u16, d: i32, (lo, hi, by): (i32, i32, i32)) -> u16 {
+    step_on(i32::from(v), d, by, lo, hi) as u16
+}
+
+/// Bedtime `d` quarter hours later (earlier for a negative `d`), within
+/// the times offered (`caffeine::BEDTIMES`, which counts on from 24:00 after
+/// midnight), kept as minutes after midnight.
+fn step_bedtime(bedtime: u16, d: i32) -> u16 {
+    let day = caffeine::DAY as i32;
+    let mut v = i32::from(bedtime) % day;
+    if v < caffeine::DAY_START as i32 {
+        v += day;
+    }
+    let (lo, hi) = (i32::from(*caffeine::BEDTIMES.start()), i32::from(*caffeine::BEDTIMES.end()));
+    (step_on(v, d, BEDTIME_STEP, lo, hi) % day) as u16
+}
+
+/// The half-life `d` places along `caffeine::HALF_LIVES` (one between two
+/// goes to the next one that way), within its ends.
+fn step_half_life(h: f32, d: i32) -> f32 {
+    let list = caffeine::HALF_LIVES;
+    (0..d.unsigned_abs()).fold(h, |h, _| {
+        if d > 0 {
+            list.iter().copied().find(|x| *x > h + 0.01).unwrap_or(list[list.len() - 1])
+        } else {
+            list.iter().rev().copied().find(|x| *x < h - 0.01).unwrap_or(list[0])
+        }
+    })
 }
 
 /// Carry out `act` on the row `key`. Settings save through
@@ -647,6 +788,15 @@ pub fn apply(st: &mut AppState, key: Key, act: Act) {
         Key::PrayerCountdown => s.prayer.remind_before_min = step_min(s.prayer.remind_before_min, step, 0, 60),
         Key::PrayerPause => s.prayer.pause_music = !s.prayer.pause_music,
         Key::PrayerFollow => s.prayer.follow_location = !s.prayer.follow_location,
+        Key::PrayerCalendar => match act {
+            Act::Pick(i) if i < FOLLOWS.len() => s.prayer.follow = FOLLOWS[i].0,
+            _ => return,
+        },
+        Key::CaffeineBedtime => s.caffeine.bedtime = step_bedtime(s.caffeine.sane().bedtime, step),
+        Key::CaffeineHalfLife => s.caffeine.half_life = step_half_life(s.caffeine.sane().half_life, step),
+        Key::CaffeineBedLimit => s.caffeine.bed_limit_mg = step_mg(s.caffeine.sane().bed_limit_mg, step, BED_LIMIT_MG),
+        Key::CaffeineDayLimit => s.caffeine.day_limit_mg = step_mg(s.caffeine.sane().day_limit_mg, step, DAY_LIMIT_MG),
+        Key::CaffeineRemind => s.caffeine.remind = !s.caffeine.remind,
         Key::AiNotices => s.usage.notices = !s.usage.notices,
         Key::AiNear => s.usage.near_pct = (s.usage.near_pct as i32 + step * 5).clamp(50, 95) as u8,
         Key::SettingsFile => {
@@ -851,6 +1001,14 @@ impl View {
         out.moving = self.motion.moving;
         self.moving = out.moving;
         out
+    }
+}
+
+impl Drop for View {
+    /// The window closes: the Diorama card's picture goes with it, so
+    /// nothing of the window stays at rest.
+    fn drop(&mut self) {
+        let _ = DIORAMA_KEPT.try_with(|kept| kept.try_borrow_mut().map(|mut k| k.take()));
     }
 }
 
@@ -1166,7 +1324,7 @@ fn block_h(st: &AppState, b: &Block) -> f32 {
                 72.0
             }
         }
-        Block::Themes => GROUP_TITLE_H + THEME_CARD_H,
+        Block::Themes => GROUP_TITLE_H + theme_cards_h(),
         Block::Account => 72.0,
         Block::Addons => crate::pages::addons::height(st),
         Block::Note(_) => 18.0,
@@ -1473,17 +1631,30 @@ fn draw_version(ui: &mut Ui, st: &mut AppState, r: Rect, view: Rect, sf: &Surfac
     }
 }
 
-/// The four themes, a card each: a small screen with the island on it as
-/// the theme draws it, the name and a line. The ring and the tick fade to
-/// the theme picked.
+/// How tall the theme cards are together: as many rows as they fill.
+fn theme_cards_h() -> f32 {
+    let rows = THEMES.len().div_ceil(THEME_COLS) as f32;
+    rows * THEME_CARD_H + (rows - 1.0).max(0.0) * THEME_GAP
+}
+
+/// The `i`-th theme's card in the block `r` (under its caption): rows of
+/// [`THEME_COLS`] from the left, the last row as far as the themes go.
+fn theme_card(r: Rect, i: usize) -> Rect {
+    let cols = THEME_COLS as f32;
+    let w = ((r.w - (cols - 1.0) * THEME_GAP) / cols).floor();
+    let (row, col) = ((i / THEME_COLS) as f32, (i % THEME_COLS) as f32);
+    Rect::new(r.x + col * (w + THEME_GAP), r.y + GROUP_TITLE_H + row * (THEME_CARD_H + THEME_GAP), w, THEME_CARD_H)
+}
+
+/// The themes, a card each, three to a row: a small screen with the island
+/// on it as the theme draws it, the name and a line. The ring and the tick
+/// fade to the theme picked.
 fn draw_themes(ui: &mut Ui, st: &mut AppState, r: Rect, view: Rect, sf: &Surfaces, m: &mut Motion) {
     ui.c.text("Theme", Rect::new(r.x + 2.0, r.y, r.w, GROUP_TITLE_H - 6.0), &TextStyle::footnote().weight(Weight::Semibold).color(palette::TEXT_DIM));
-    let n = THEMES.len() as f32;
-    let w = ((r.w - (n - 1.0) * THEME_GAP) / n).floor();
     let accent = st.accent;
     let mut picked = None;
     for (i, (theme, name, line)) in THEMES.iter().enumerate() {
-        let c = Rect::new(r.x + i as f32 * (w + THEME_GAP), r.y + GROUP_TITLE_H, w, THEME_CARD_H);
+        let c = theme_card(r, i);
         let id = wid_n("settingswin.theme", i as u64);
         let resp = match visible(c, view) {
             Some(hit) => ui.button(id, hit),
@@ -1511,7 +1682,7 @@ fn draw_themes(ui: &mut Ui, st: &mut AppState, r: Rect, view: Rect, sf: &Surface
         let ty = screen.bottom() + 10.0;
         let tw = c.w - 24.0 - if on { 20.0 } else { 0.0 };
         ui.c.text(name, Rect::new(tx, ty, tw, 19.0), &TextStyle::body().weight(Weight::Semibold));
-        ui.c.text(line, Rect::new(tx, ty + 20.0, c.w - 24.0, 34.0), &TextStyle::footnote().color(palette::TEXT_DIM).wrap().top());
+        ui.c.text(line, Rect::new(tx, ty + 20.0, (c.w - 24.0).min(THEME_LINE_W), 34.0), &TextStyle::footnote().color(palette::TEXT_DIM).wrap().top());
         if ring > 0.0 {
             let dot = Point::new(c.right() - 20.0, ty + 9.5);
             ui.c.with_alpha(ring, |cv| {
@@ -1529,8 +1700,52 @@ fn draw_themes(ui: &mut Ui, st: &mut AppState, r: Rect, view: Rect, sf: &Surface
     }
 }
 
+thread_local! {
+    /// The Diorama card's picture and the scale (pixels per DIP) it was
+    /// painted for: painted when the card first shows, kept while the
+    /// window is open ([`View`]'s drop lets it go).
+    static DIORAMA_KEPT: RefCell<Option<(f32, Image)>> = const { RefCell::new(None) };
+}
+
+/// The Diorama card's picture for a canvas of `scale` pixels per DIP: the
+/// theme's resting pill at [`DIORAMA_MOMENT`], at its own size (a smaller
+/// copy would smear its pixels and the time in its sky).
+fn diorama_picture(scale: f32) -> studio_diorama::Picture {
+    let (w, h) = (DIORAMA_CARD_W, studio_diorama::H);
+    studio_diorama::render(&DIORAMA_MOMENT, &studio_diorama::View { w, h, rest_w: w, rest_h: h, scale })
+}
+
+/// That picture as an image, painted once for a scale and kept. With it
+/// comes the painting it took the place of (the window moved to a screen of
+/// another scale), for the canvas to let go of.
+fn diorama_image(scale: f32) -> (Image, Option<Image>) {
+    DIORAMA_KEPT.with(|kept| {
+        let mut kept = kept.borrow_mut();
+        if let Some((_, image)) = kept.as_ref().filter(|(s, _)| *s == scale) {
+            return (image.clone(), None);
+        }
+        let p = diorama_picture(scale);
+        let image = ImageData::new(p.w, p.h, p.bgra);
+        let old = kept.replace((scale, image.clone())).map(|(_, old)| old);
+        (image, old)
+    })
+}
+
+/// Where the Diorama card's picture goes on its little `screen`: centred,
+/// floating [`DIORAMA_FLOAT`] below the top edge, on whole pixels and
+/// exactly as large as its `px` pixels are at `scale`. So it is drawn pixel
+/// for pixel: `Canvas::image` fills its rect, and a rect of another shape
+/// would crop the picture.
+fn diorama_spot(screen: Rect, px: (u32, u32), scale: f32) -> Rect {
+    let s = scale.max(0.25);
+    let snap = |v: f32| (v * s).round() / s;
+    let (w, h) = (px.0 as f32 / s, px.1 as f32 / s);
+    Rect::new(snap(screen.center().x - w / 2.0), snap(screen.y + DIORAMA_FLOAT), w, h)
+}
+
 /// A theme's island on a small screen: hanging from its top edge, glass,
-/// with Oyen's eyes, or floating below it. Drawn as it is, in either mode.
+/// with Oyen's eyes, floating below it, or floating there as Diorama's
+/// picture. Drawn as it is, in either mode.
 fn draw_theme_preview(c: &mut Canvas, theme: Theme, screen: Rect) {
     c.clip(screen);
     c.fill_rrect(screen, 7.0, WALLPAPER);
@@ -1555,10 +1770,21 @@ fn draw_theme_preview(c: &mut Canvas, theme: Theme, screen: Rect) {
             }
         }
         Theme::Pill => {
-            let body = Rect::new(cx - 36.0, screen.y + 7.0, 72.0, 20.0);
+            let body = Rect::new(cx - 36.0, screen.y + THEME_FLOAT, 72.0, 20.0);
             c.fill_rrect(body.offset(0.0, 2.0), 10.0, Color::black(0.25));
             c.fill_rrect(body, 10.0, palette::ISLAND);
             c.text("10:08", body, &clock.color(palette::TEXT));
+        }
+        Theme::Diorama => {
+            // The picture itself, with the time in its sky.
+            let scale = c.scale();
+            let (image, old) = diorama_image(scale);
+            if let Some(old) = old {
+                c.forget_image(&old);
+            }
+            let body = diorama_spot(screen, (image.width, image.height), scale);
+            c.fill_rrect(body.offset(0.0, 2.0), body.h / 2.0, Color::black(0.25));
+            c.image_exact(&image, body, body.h / 2.0);
         }
     }
     c.unclip();
@@ -1611,6 +1837,21 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn prayer_times_picks_kemenag_or_muhammadiyah() {
+        let mut st = state();
+        let row = |st: &AppState| blocks(Section::Prayer, st).into_iter().find_map(|b| match b {
+            Block::Group(_, items) => items.into_iter().find(|i| i.key == Key::PrayerCalendar),
+            _ => None,
+        });
+        assert_eq!(row(&st).map(|i| i.ctl), Some(Ctl::Choice(vec!["Kemenag", "Muhammadiyah (KHGT)"], Some(0))));
+        apply(&mut st, Key::PrayerCalendar, Act::Pick(1));
+        assert_eq!(st.settings.prayer.follow, PrayerFollow::Muhammadiyah);
+        assert_eq!(row(&st).map(|i| i.ctl), Some(Ctl::Choice(vec!["Kemenag", "Muhammadiyah (KHGT)"], Some(1))));
+        apply(&mut st, Key::PrayerCalendar, Act::Pick(0));
+        assert_eq!(st.settings.prayer.follow, PrayerFollow::Kemenag);
     }
 
     #[test]
@@ -1675,11 +1916,144 @@ mod tests {
     }
 
     #[test]
+    fn notifications_switches_off_under_tabs_only_where_the_copy_can_read_them() {
+        let mut st = state();
+        let listed = |st: &AppState| row(Section::Tabs, st, Key::Tab(PageKind::Notifications)).is_some();
+        assert!(!listed(&st), "the download has no Notifications");
+        st.notify_can = true;
+        assert!(listed(&st) && st.notifications_on(), "on from the start in the Store copy");
+        apply(&mut st, Key::Tab(PageKind::Notifications), Act::Toggle);
+        assert!(!st.notifications_on() && st.cmds.iter().any(|c| matches!(c, Command::SaveSettings)));
+        apply(&mut st, Key::Tab(PageKind::Notifications), Act::Toggle);
+        assert!(st.notifications_on());
+    }
+
+    #[test]
     fn prayer_has_a_section_only_while_its_add_on_is_on() {
         let st = state();
         assert!(!sections(&st).contains(&Section::Prayer));
         assert_eq!(sections(&st).first(), Some(&Section::General));
         assert_eq!(sections(&st).last(), Some(&Section::About));
+    }
+
+    /// Caffeine switched on, as its switch on the Add-ons page leaves it.
+    fn with_caffeine() -> AppState {
+        let mut s = Settings::default();
+        s.set_addon(poni_core::addons::CAFFEINE.id, true);
+        AppState::new(s, Store::default())
+    }
+
+    #[test]
+    fn caffeine_has_a_section_only_while_its_add_on_is_on() {
+        assert!(!sections(&state()).contains(&Section::Caffeine));
+        let mut st = with_caffeine();
+        let list = sections(&st);
+        // After Focus (and Prayer times while that is on), with its cup.
+        let at = list.iter().position(|s| *s == Section::Caffeine).expect("its section");
+        assert_eq!((list[at - 1], list.last()), (Section::Focus, Some(&Section::About)));
+        assert_eq!((Section::Caffeine.title(), Section::Caffeine.key(), Section::Caffeine.icon()), ("Caffeine", "caffeine", Icon::Coffee));
+        // Switched off, it goes from the sidebar (an open window shows General).
+        st.addons.insert(poni_core::addons::CAFFEINE.id, poni_core::addons::Status::Off);
+        assert!(!sections(&st).contains(&Section::Caffeine));
+    }
+
+    #[test]
+    fn caffeine_rows_apply_and_stay_in_range() {
+        let mut st = with_caffeine();
+        let steppers = [Key::CaffeineBedtime, Key::CaffeineHalfLife, Key::CaffeineBedLimit, Key::CaffeineDayLimit];
+        let shown = |st: &AppState| -> Vec<String> {
+            steppers
+                .into_iter()
+                .map(|k| match row(Section::Caffeine, st, k).map(|i| i.ctl) {
+                    Some(Ctl::Stepper(v)) => v,
+                    other => panic!("{k:?}: {other:?}"),
+                })
+                .collect()
+        };
+        assert_eq!(shown(&st), ["23:00", "5 h", "35 mg", "400 mg"]);
+        // A step up: a quarter hour, the next half-life, 5 mg and 50 mg. Each saves.
+        for k in steppers {
+            st.cmds.clear();
+            apply(&mut st, k, Act::Step(1));
+            assert!(st.cmds.iter().any(|c| matches!(c, Command::SaveSettings)), "{k:?}");
+        }
+        assert_eq!(shown(&st), ["23:15", "5.5 h", "40 mg", "450 mg"]);
+        // To their ends and no further.
+        for _ in 0..100 {
+            steppers.into_iter().for_each(|k| apply(&mut st, k, Act::Step(1)));
+        }
+        assert_eq!(shown(&st), ["03:00", "15 h", "80 mg", "1000 mg"]);
+        let c = &st.settings.caffeine;
+        assert_eq!((c.bedtime, c.half_life, c.bed_limit_mg, c.day_limit_mg), (3 * 60, 15.0, 80, 1000));
+        for _ in 0..100 {
+            steppers.into_iter().for_each(|k| apply(&mut st, k, Act::Step(-1)));
+        }
+        assert_eq!(shown(&st), ["20:00", "2 h", "10 mg", "100 mg"]);
+        // Bedtime goes past midnight and back, kept as minutes after midnight.
+        st.settings.caffeine.bedtime = 23 * 60 + 45;
+        apply(&mut st, Key::CaffeineBedtime, Act::Step(1));
+        assert_eq!((st.settings.caffeine.bedtime, shown(&st)[0].as_str()), (0, "00:00"));
+        apply(&mut st, Key::CaffeineBedtime, Act::Step(1));
+        assert_eq!(st.settings.caffeine.bedtime, 15);
+        apply(&mut st, Key::CaffeineBedtime, Act::Step(-1));
+        apply(&mut st, Key::CaffeineBedtime, Act::Step(-1));
+        assert_eq!(st.settings.caffeine.bedtime, 23 * 60 + 45);
+        // A value typed into the file goes to the next step that way, or
+        // back into the rows' range.
+        for (d, to) in [(1, 23 * 60 + 15), (-1, 23 * 60)] {
+            st.settings.caffeine.bedtime = 23 * 60 + 7;
+            apply(&mut st, Key::CaffeineBedtime, Act::Step(d));
+            assert_eq!(st.settings.caffeine.bedtime, to);
+        }
+        st.settings.caffeine.bedtime = 12 * 60;
+        apply(&mut st, Key::CaffeineBedtime, Act::Step(-1));
+        assert_eq!(st.settings.caffeine.bedtime, 20 * 60);
+        st.settings.caffeine.half_life = 5.2;
+        apply(&mut st, Key::CaffeineHalfLife, Act::Step(1));
+        assert_eq!(st.settings.caffeine.half_life, 5.5);
+        st.settings.caffeine.half_life = f32::NAN;
+        apply(&mut st, Key::CaffeineHalfLife, Act::Step(-1));
+        assert_eq!(st.settings.caffeine.half_life, 4.5);
+        st.settings.caffeine.bed_limit_mg = 37;
+        apply(&mut st, Key::CaffeineBedLimit, Act::Step(-1));
+        assert_eq!(st.settings.caffeine.bed_limit_mg, 35);
+        st.settings.caffeine.day_limit_mg = 5000;
+        apply(&mut st, Key::CaffeineDayLimit, Act::Step(-1));
+        assert_eq!(st.settings.caffeine.day_limit_mg, 1000);
+        // What the rows set is what the add-on uses as it is.
+        assert_eq!(st.settings.caffeine.sane(), st.settings.caffeine);
+        // The reminder's switch.
+        let remind = |st: &AppState| row(Section::Caffeine, st, Key::CaffeineRemind).map(|i| i.ctl);
+        assert_eq!(remind(&st), Some(Ctl::Switch(Some(true))));
+        apply(&mut st, Key::CaffeineRemind, Act::Toggle);
+        assert!(!st.settings.caffeine.remind && st.cmds.iter().any(|c| matches!(c, Command::SaveSettings)));
+        assert_eq!(remind(&st), Some(Ctl::Switch(Some(false))));
+        apply(&mut st, Key::CaffeineRemind, Act::Toggle);
+        assert!(st.settings.caffeine.remind);
+    }
+
+    #[test]
+    fn the_sidebar_has_room_for_every_section_at_full_height() {
+        // Every section but About is a row from the top, About sits 12 DIPs
+        // above the card's bottom (`draw_sidebar`), with Prayer times,
+        // Caffeine and AI usage all shown. The Mac's window buttons take
+        // `TITLEBAR` (28) of its 600.
+        let rows = (Section::ALL.len() - 1) as f32;
+        let last = NAV_Y + rows * (NAV_H + NAV_GAP) - NAV_GAP;
+        assert!(last + NAV_GAP <= CARD_H - 12.0 - NAV_H, "Windows: {last}");
+        assert!(28.0 + last + NAV_GAP <= 600.0 - 12.0 - NAV_H, "Mac: {last}");
+    }
+
+    #[test]
+    fn caffeine_fits_the_window_at_its_full_height_without_scrolling() {
+        let st = with_caffeine();
+        let content: f32 = blocks(Section::Caffeine, &st).iter().map(|b| block_h(&st, b) + GROUP_GAP).sum();
+        assert!(content + 16.0 <= CARD_H - CONTENT_Y - 1.0, "{content}");
+        // Its help lines say the half-life's usual range and the day's limits.
+        let sub = |k| row(Section::Caffeine, &st, k).and_then(|i| i.sub).unwrap_or_default();
+        assert_eq!(sub(Key::CaffeineHalfLife), "Most adults: 2 to 10 hours");
+        assert_eq!(sub(Key::CaffeineDayLimit), "400 mg a day for healthy adults, 200 mg in pregnancy");
+        assert_eq!(sub(Key::CaffeineRemind), format!("On the island, {} minutes before", caffeine::REMIND_BEFORE));
     }
 
     #[test]
@@ -1694,6 +2068,132 @@ mod tests {
         assert!(looks(&st).contains(&"Status"));
         st.settings.theme = Theme::Oyen;
         assert!(looks(&st).contains(&"Oyen"));
+        // Diorama rests as its picture: with the time, alone, or hidden. It
+        // draws its clock for a status bar picked in Pill, and the picture
+        // alone for eyes picked elsewhere.
+        st.settings.theme = Theme::Diorama;
+        st.settings.idle_style = IdleStyle::Status;
+        assert_eq!(looks(&st), ["Clock", "Minimal", "Hidden"]);
+        assert_eq!(row(Section::Appearance, &st, Key::IdleLook).map(|i| i.ctl), Some(Ctl::Choice(looks(&st), Some(0))));
+        st.settings.idle_style = IdleStyle::Eyes;
+        assert_eq!(row(Section::Appearance, &st, Key::IdleLook).map(|i| i.ctl), Some(Ctl::Choice(looks(&st), Some(1))));
+        // A pick there is one of its three.
+        apply(&mut st, Key::IdleLook, Act::Pick(2));
+        assert_eq!(st.settings.idle_style, IdleStyle::Hidden);
+        apply(&mut st, Key::IdleLook, Act::Pick(1));
+        assert_eq!(st.settings.idle_style, IdleStyle::Minimal);
+        st.cmds.clear();
+        apply(&mut st, Key::IdleLook, Act::Pick(3));
+        assert!(st.cmds.is_empty() && st.settings.idle_style == IdleStyle::Minimal);
+    }
+
+    /// Where a theme comes in the pickers. No `_` arm: a theme added to the
+    /// enum stops this compiling until it has a place, and then the test
+    /// below asks for its card.
+    fn place(t: Theme) -> usize {
+        match t {
+            Theme::Classic => 0,
+            Theme::Oyen => 1,
+            Theme::Glass => 2,
+            Theme::Pill => 3,
+            Theme::Diorama => 4,
+        }
+    }
+
+    #[test]
+    fn every_theme_has_a_card_in_the_pickers_order() {
+        assert_eq!(THEMES.map(|t| t.1), ["Classic", "Oyen", "Glass", "Pill", "Diorama"]);
+        for (i, (theme, name, line)) in THEMES.iter().enumerate() {
+            assert_eq!(place(*theme), i, "{name}");
+            assert!(!line.is_empty(), "{name} says what it is");
+        }
+    }
+
+    #[test]
+    fn the_theme_cards_sit_three_to_a_row_as_wide_as_the_content() {
+        // The content column: the card less the sidebar and the padding.
+        let r = Rect::new(SIDEBAR_W + PAD, CONTENT_Y, CARD_W - SIDEBAR_W - 2.0 * PAD, block_h(&state(), &Block::Themes));
+        let cards: Vec<Rect> = (0..THEMES.len()).map(|i| theme_card(r, i)).collect();
+        // Five themes: three, then two, the same size.
+        assert_eq!(cards.iter().filter(|c| c.y == cards[0].y).count(), 3);
+        assert_eq!(cards.iter().filter(|c| c.y == cards[3].y).count(), 2);
+        assert_eq!(r.h, GROUP_TITLE_H + 2.0 * THEME_CARD_H + THEME_GAP);
+        for (i, c) in cards.iter().enumerate() {
+            assert_eq!((c.w, c.h), (180.0, THEME_CARD_H), "card {i}");
+            assert!(c.x >= r.x && c.right() <= r.right() && c.y >= r.y + GROUP_TITLE_H && c.bottom() <= r.bottom(), "card {i} leaves the block: {c:?}");
+            for (j, d) in cards[..i].iter().enumerate() {
+                let apart = c.x >= d.right() + THEME_GAP || d.x >= c.right() + THEME_GAP || c.y >= d.bottom() + THEME_GAP || d.y >= c.bottom() + THEME_GAP;
+                assert!(apart, "cards {j} and {i} touch");
+            }
+        }
+        // A row ends where the groups under the cards do, and the second
+        // starts under the first.
+        assert_eq!((cards[0].x, cards[2].right(), cards[3].x), (r.x, r.right(), r.x));
+        // Every card's line keeps its measure, and its little screen has
+        // room for the widest island drawn on it with air either side.
+        assert!(cards[0].w - 24.0 >= THEME_LINE_W);
+        assert!(cards[0].w - 20.0 >= DIORAMA_CARD_W + 2.0 * 16.0);
+    }
+
+    #[test]
+    fn appearance_fits_the_window_at_its_full_height_without_scrolling() {
+        let mut st = state();
+        // In every theme: Pill's fifth idle look is one more choice in its
+        // row, not one more row.
+        for (theme, _, _) in THEMES {
+            st.settings.theme = theme;
+            let content: f32 = blocks(Section::Appearance, &st).iter().map(|b| block_h(&st, b) + GROUP_GAP).sum();
+            // What the card shows under its title, less the room the scroll
+            // keeps under the last block.
+            assert!(content + 16.0 <= CARD_H - CONTENT_Y - 1.0, "{theme:?}: {content}");
+        }
+    }
+
+    #[test]
+    fn the_diorama_card_shows_the_themes_picture_whole_at_its_own_size() {
+        let screen = Rect::new(282.0, 104.0, 160.0, THEME_PREVIEW_H);
+        for scale in [1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0] {
+            let p = diorama_picture(scale);
+            // The card's pane, 120 x 38 DIP, to the pixel.
+            assert_eq!(p.w as f32, DIORAMA_CARD_W * scale, "{scale}");
+            assert!((p.h as f32 - studio_diorama::H * scale).abs() <= 0.5, "{scale}: {} px tall", p.h);
+            assert_eq!(p.bgra.len(), (p.w * p.h * 4) as usize, "{scale}");
+            // Its place has the picture's own shape (so nothing of it is
+            // cropped or stretched) on whole pixels, inside the screen.
+            let at = diorama_spot(screen, (p.w, p.h), scale);
+            assert_eq!(((at.w * scale).round(), (at.h * scale).round()), (p.w as f32, p.h as f32), "{scale}: {at:?}");
+            assert!((at.w / at.h - p.w as f32 / p.h as f32).abs() < 1e-4, "{scale}: {at:?}");
+            for v in [at.x, at.y] {
+                assert!((v * scale - (v * scale).round()).abs() < 1e-3, "{scale}: {at:?}");
+            }
+            assert!((at.center().x - screen.center().x).abs() <= 0.5 / scale + 1e-3, "{scale}: {at:?}");
+            assert!((at.y - (screen.y + DIORAMA_FLOAT)).abs() <= 0.5 / scale + 1e-3 && at.bottom() + 2.0 < screen.bottom(), "{scale}: {at:?}");
+            // Room beside it on the card's screen, as beside Pill's capsule.
+            assert!(at.x - screen.x >= 16.0 && screen.right() - at.right() >= 16.0, "{scale}: {at:?}");
+        }
+        // A morning: the sun is up and the glass ball rests on the house.
+        assert!(!DIORAMA_MOMENT.night() && DIORAMA_MOMENT.lens == DIORAMA_MOMENT.rest_lens());
+        assert_eq!(DIORAMA_MOMENT.clock.map(|c| (c.hour, c.minute)), Some((10, 8)));
+        assert_eq!(DIORAMA_MOMENT.minute, 10.0 * 60.0 + 8.0);
+    }
+
+    #[test]
+    fn the_diorama_cards_picture_is_painted_once_and_goes_with_the_window() {
+        let view = View::new(Section::Appearance);
+        let (first, replaced) = diorama_image(2.0);
+        assert!(replaced.is_none());
+        assert_eq!((first.width, first.height), (240, 76));
+        // Drawn again, it is the same painting.
+        let (again, replaced) = diorama_image(2.0);
+        assert!(std::sync::Arc::ptr_eq(&first, &again) && replaced.is_none());
+        // On a screen of another scale it is painted for that one, and the
+        // canvas gets the old painting to let go of.
+        let (small, replaced) = diorama_image(1.0);
+        assert_eq!((small.width, small.height), (120, 38));
+        assert!(replaced.is_some_and(|old| std::sync::Arc::ptr_eq(&old, &first)));
+        // The window closes: nothing of it is kept.
+        drop(view);
+        assert!(DIORAMA_KEPT.with(|kept| kept.borrow().is_none()));
     }
 
     #[test]

@@ -40,11 +40,15 @@ Put the website change in the release PR, or merge it to main just before you pu
 2. Once the tag's `ci` run has published the release, its `site` job runs `tools/ci-site-check.sh release`. If the page on main names the new version, the job starts the Website workflow, which puts the page live.
 3. If the page still names an older version, the job opens an issue, "Landing page not updated for vX", with this checklist. The first website deploy that names vX closes it.
 
+### Creator links
+
+`site/creators.json` lists the codes behind creator addresses like studio.oyenza.com/budi, and `tools/creator_links.py` (run by `tools/build_site.sh`) writes their forwarding pages. Codes only, never names or handles: the repository is public. How to add one: [docs/creators.md](docs/creators.md).
+
 ## Cutting a release
 
 Merges, tags and releases happen only when the maintainer says so.
 
-The version lives in several files: copy the last "Release x.y.z" commit (`git log --grep '^Release '`). `Cargo.lock` holds it once for each of the workspace's crates (poni, poni-core and studio-usage), and CI's `cargo fetch --locked` fails if one is left behind. Add `docs/release-notes/vX.md`, which becomes the release text, and the website change above. Then push an annotated tag `vX`. The `ci` workflow builds, tests and publishes the release from the tag. The `mac` workflow builds the Mac app from the same tag and, once the release is up, adds `Oyenza-Studio-X-mac.dmg` and `Oyenza-Studio-Mac.dmg` (the name the Mac download buttons use) to it.
+The version lives in several files: copy the last "Release x.y.z" commit (`git log --grep '^Release '`). `Cargo.lock` holds it once for each of the workspace's crates (poni, poni-core, studio-usage and studio-diorama), and CI's `cargo fetch --locked` fails if one is left behind. Add `docs/release-notes/vX.md`, which becomes the release text, and the website change above. Then push an annotated tag `vX`. The `ci` workflow builds, tests and publishes the release from the tag. The `mac` workflow builds the Mac app from the same tag and, once the release is up, adds `Oyenza-Studio-X-mac.dmg` and `Oyenza-Studio-Mac.dmg` (the name the Mac download buttons use) to it.
 
 On a tag, the `mac` workflow's `sign` job signs the DMG with the Developer ID, has Apple notarize it and staples it, when the `release` environment holds the signing secrets ([docs/mac-signing.md](docs/mac-signing.md)); the release then ships that DMG. Without the secrets, or when signing fails, it ships the ad-hoc DMG (a failure shows as a warning in the run). Never move those secrets out of the `release` environment or print them. The first release that ships a signed DMG also updates the README's Mac install note and the website's Mac section: no more "Open Anyway".
 

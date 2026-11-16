@@ -10,7 +10,8 @@
 //!
 //! Output per state: `<nn>-<name>.png` (composited over a wallpaper-like
 //! gradient, the way it looks on a desktop) and `<nn>-<name>-alpha.png` (the
-//! raw alpha channel). The exit code is 0 when every check passes, else 1.
+//! raw alpha channel); the Diorama theme's own pictures have no number. The
+//! exit code is 0 when every check passes, else 1.
 //!
 //! PONI_SELFTEST_THEME=glass runs every scene in the Glass theme over a page
 //! the self-test draws itself (no screen copy): PONI_SELFTEST_GLASS=light (a
@@ -22,6 +23,22 @@
 //! island floats below the top edge: its ground is checked inside the body,
 //! and its own checks say the gap above the body shows the screen and the
 //! shadow fades out inside the window (see `pill_checks`).
+//!
+//! PONI_SELFTEST_THEME=diorama runs every scene in the Diorama theme: the
+//! Pill theme's island, so Pill's checks hold, with a picture as its resting
+//! pill. After the scenes it takes that pill's own pictures, each at a set
+//! time of day on 29 October 2026 (`diorama-<what>.png`, the list is
+//! `RESTS`): the hours from dawn to the small hours, a 12-hour clock, the
+//! battery's badges, the Minimal look, the pill under the pointer, and the
+//! glass ball halfway to the tree as the sun sets. Each is checked against
+//! `studio_diorama`'s picture of that moment, and must ask for no frames
+//! once drawn; only the rolling ball does (see `diorama_checks`).
+//! PONI_SELFTEST_DIORAMA=only takes those pictures and skips the scenes: a
+//! few seconds instead of a minute and a half, for looking at the art.
+//! The whole island takes the picture's day or night look, so a Diorama run
+//! holds the scenes' clock at 10:08 of the day it runs (its pictures keep
+//! their own times), whenever CI runs it; PONI_SELFTEST_DIORAMA=night holds
+//! them at 21:30 instead: every scene in the night look.
 //!
 //! PONI_SELFTEST_PRAYER_AT=HH:MM shows the Prayer page at that time of the
 //! day (the other Prayer scenes stay 8 minutes before Ashar).
@@ -35,6 +52,8 @@ use crate::app::App;
 use crate::clock;
 use crate::gfx::{Image, ImageData};
 use crate::icons::Icon;
+use crate::island::Geom;
+use crate::pages::caffeine::Picture as CaffeinePicture;
 use crate::pages::usage::Picture as AiPicture;
 use crate::pages::{self, PageKind};
 use crate::paths;
@@ -44,8 +63,9 @@ use crate::state::{
     OyenzaState, PhoneAsk, PairedPhone, PhoneDrop, PhoneTransfer, PhoneView, PowerState, PrayerState, SysStats, VolumeState,
 };
 use crate::ui::wid;
-use poni_core::addons::{Status as AddonStatus, DOWNLOADER, HEALTH, IELTS, JAPANESE_READINGS, MEETING_NOTES, NOTIFICATIONS, PRAYER_TIMES, SCRIPT_READER, STOCKS, SYSTEM};
+use poni_core::addons::{Status as AddonStatus, CAFFEINE, DOWNLOADER, HEALTH, IELTS, JAPANESE_READINGS, MEETING_NOTES, PRAYER_TIMES, SCRIPT_READER, STOCKS, SYSTEM};
 use poni_core::notifications::NotificationSettings;
+use poni_core::datetime::{days_from_civil, LocalDateTime};
 use poni_core::geom::{palette, Color, Point, Rect};
 use poni_core::health::{HealthDay, HealthSnapshot, HealthSource};
 use poni_core::lrc::{parse_lrc, Lyrics};
@@ -54,7 +74,7 @@ use poni_core::phonedrop::QrMatrix;
 use poni_core::prayer::{PlaceList, World};
 use poni_core::pomodoro::{Phase as PomoPhase, RunState};
 use poni_core::power::{PowerReading, PsuReading, Rail};
-use poni_core::settings::{IdleStyle, Theme};
+use poni_core::settings::{IdleStyle, PrayerFollow, Theme};
 use poni_core::shelf::ShelfItem;
 use poni_core::frames::FrameRate;
 use poni_core::sysmon::{
@@ -70,6 +90,7 @@ use std::sync::{Arc, Mutex};
 use std::path::PathBuf;
 use std::thread::JoinHandle;
 use std::time::Instant;
+use studio_diorama::{Badge, Clock, Moment, View};
 use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::UI::WindowsAndMessaging::{
     GetWindowLongPtrW, GetWindowRect, IsWindowVisible, GWL_EXSTYLE, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
@@ -98,8 +119,9 @@ const CLICK_TIMEOUT: f64 = 1.5;
 /// together, 28 Oct) the Classic run passed 70 s at scene 119. The CI and
 /// Store test steps wait 180 s for the whole run (this plus the writers'
 /// 3.5 s, the Classic runs' IELTS turn of about 26 s and notes turn of about
-/// 5 s, which the deadline leaves out, or 40 s more for the animation runs,
-/// stays under it), the Wine runner 180 s.
+/// 5 s or the Diorama runs' own pictures, about 7 s, which the deadline
+/// leaves out, or 40 s more for the animation runs, stays under it), the
+/// Wine runner 180 s.
 const SCENE_DEADLINE: f64 = 90.0;
 /// Give up waiting for PNG writers at this point: 3.5 s after the scene
 /// deadline, so the last scenes' pictures get their time however long the
@@ -730,8 +752,8 @@ fn sample_message() -> poni_core::notifications::Seen {
 
 /// The Notifications scenes: what Windows answered, and the apps the page
 /// lists (WhatsApp and Telegram on, Phone Link switched off by hand, Outlook
-/// as every other app starts: off). Every other scene has the add-on's
-/// choices as they start.
+/// as every other app starts: off). Every other scene has its choices as
+/// they start.
 fn seed_notifications(st: &mut AppState, scene: Scene) {
     use crate::state::NotifyAccess;
     st.notify_access = match scene {
@@ -772,6 +794,23 @@ fn seed_stocks(st: &mut AppState, scene: Scene, now: f64) {
         }
     };
     picture(st, shows, now);
+}
+
+/// The Caffeine page's scenes on made-up days (`pages::caffeine::picture`),
+/// the clock held at the picture's time; every other scene: no drinks, and
+/// the PC's own clock.
+fn seed_caffeine(st: &mut AppState, scene: Scene) {
+    match scene.caffeine() {
+        Some(shows) => {
+            crate::pages::caffeine::picture(st, shows);
+            clock::hold_local(Some(st.local));
+        }
+        None => {
+            st.store.caffeine = poni_core::caffeine::Log::default();
+            st.ui.caffeine = crate::pages::caffeine::CaffeineUi::default();
+            clock::hold_local(None);
+        }
+    }
 }
 
 /// The Downloads page's list for its scenes, newest first: a YouTube link
@@ -916,7 +955,15 @@ fn sample_notes() -> poni_core::notes::Saved {
 fn seed_prayer(st: &mut AppState, scene: Scene, until: f64) {
     let on = matches!(
         scene,
-        Scene::Page(PageKind::Prayer) | Scene::PrayerPicker | Scene::PrayerCountdown | Scene::PrayerNotice | Scene::PrayerPickerWorld | Scene::PrayerWorld | Scene::PrayerOk
+        Scene::Page(PageKind::Prayer)
+            | Scene::PrayerPicker
+            | Scene::PrayerCountdown
+            | Scene::PrayerNotice
+            | Scene::PrayerPickerWorld
+            | Scene::PrayerWorld
+            | Scene::PrayerOk
+            | Scene::PrayerMuhammadiyah
+            | Scene::PrayerPickerFollow
     );
     if !on {
         st.prayer = PrayerState::default();
@@ -938,13 +985,14 @@ fn seed_prayer(st: &mut AppState, scene: Scene, until: f64) {
     st.prayer.suggested = false;
     st.prayer.locate = Locate::Found { km: 2.0 };
     st.prayer.located_at = Some(st.unix);
-    st.prayer.picking = matches!(scene, Scene::PrayerPicker | Scene::PrayerPickerWorld);
+    st.settings.prayer.follow = if scene == Scene::PrayerMuhammadiyah { PrayerFollow::Muhammadiyah } else { PrayerFollow::Kemenag };
+    st.prayer.picking = matches!(scene, Scene::PrayerPicker | Scene::PrayerPickerWorld | Scene::PrayerPickerFollow);
     st.prayer.query = match scene {
         Scene::PrayerPicker => "band".into(),
         Scene::PrayerPickerWorld => "edin".into(),
         _ => String::new(),
     };
-    let site = st.prayer.site().expect("the place's site");
+    let site = st.prayer_site().expect("the place's site");
     let today = site.local_day(st.unix);
     let ashar = poni_core::prayer::day_times(&site, today).expect("today's times").ashar;
     // PONI_SELFTEST_PRAYER_AT=HH:MM: the Prayer page at that time of
@@ -1159,7 +1207,7 @@ enum Scene {
     RecordActivity,
     RecordPaused,
     /// The Add-ons page with the recorder installed: Screen recorder's row
-    /// (eight rows with Notifications, a line each, the window no taller).
+    /// (a line each, the window no taller).
     AddonsRecorder,
     /// The Downloads page before anything was downloaded (`Page(Downloads)`
     /// shows one downloading, one waiting, one done and one failed).
@@ -1172,13 +1220,14 @@ enum Scene {
     /// Prayer times: the countdown 8 minutes before Ashar over a song with
     /// synced lyrics, its OK pressed (`Phase::PressOk`): the song's line again.
     PrayerOk,
-    /// The Notifications add-on: a WhatsApp message on the closed island...
+    /// Notifications (the Store copy): a WhatsApp message on the closed island...
     MessageNotice,
     /// ...with "Message text" switched off: it waits for Show.
     MessageHidden,
     /// The Notifications page before Windows was asked: Allow, no apps yet.
     NotifyAsk,
-    /// The Notifications page in the download from GitHub, which can't read them.
+    /// The Notifications page when Windows says this copy has no package (the
+    /// download offers no Notifications, so only a broken Store copy says it).
     NotifyNoPackage,
     /// The AI tab on made-up readings, as the page's picture shows it
     /// (`pages::usage::picture`): its plans, troubles, nothing found, ...
@@ -1202,6 +1251,9 @@ enum Scene {
     /// Settings with Today and Tasks taken off the tab row: their chips
     /// struck through, the header's row without them.
     SettingsTabs,
+    /// Settings in the Store copy: Notifications' chip beside the island's
+    /// own pages, on as everyone's starts, and its bell in the header's row.
+    SettingsTabsStore,
     /// Meeting notes: Oyen listening, 0:42 in, both bars moving.
     NotesListening,
     /// Meeting notes: the meeting handed over, Oyen writing.
@@ -1216,6 +1268,30 @@ enum Scene {
     /// tools in place from before: the Downloader and Notifications stay
     /// off, each saying "Sign in with your Oyenza account".
     AddonsPro,
+    /// What a Pro add-on does, the page its row opens without Pro.
+    AddonsAbout,
+    /// Prayer times in Jakarta following Muhammadiyah: Majelis Tarjih's
+    /// times, the KHGT date, "Muhammadiyah" beside the place.
+    PrayerMuhammadiyah,
+    /// Prayer times: the place picker with nothing typed, the row choosing
+    /// Kemenag's or Muhammadiyah's times and dates at its bottom.
+    PrayerPickerFollow,
+    /// A song playing on the closed island, which a real press, a move
+    /// sideways and the release drag to the right (`Phase::Drag`): it
+    /// stays closed there, and a click on it there still opens it.
+    IslandDrag,
+    /// The open island where it was dragged to the screen's right edge: it
+    /// grows away from the edge, whole on the screen.
+    IslandOpenAtEdge,
+    /// Caffeine: Add a drink open on its kinds (`Page(Caffeine)` is the day
+    /// itself, `caffeine::Picture::Day`).
+    CaffeineKinds,
+    /// Caffeine: Add a drink on a 2-shot es kopi susu, Blend, now.
+    CaffeineAdd,
+    /// Caffeine: no drink yet in the morning, last call ahead.
+    CaffeineEmpty,
+    /// Caffeine: a late day over the limit, its usual drink too strong for bed.
+    CaffeineLate,
 }
 
 /// A later release than this build, as the update file describes one.
@@ -1251,6 +1327,54 @@ fn ai_alert(st: &AppState, out: bool) -> Option<studio_usage::alerts::Alert> {
     alerts::changes(Some(&read(0.7)), &read(if out { 1.0 } else { 0.9 }), st.unix, &cfg).into_iter().next()
 }
 
+/// How far the self-test drags the island to the right (DIPs).
+const DRAG_DX: f32 = 560.0;
+
+/// Drag the closed island `DRAG_DX` to the right through its own mouse
+/// messages: it follows the pointer (as far as the screen lets it), stays
+/// closed, and keeps the spot; a click on it there opens it, as in the
+/// middle. Leaves it closed where it went.
+fn drag_check(app: &mut App) -> (bool, String) {
+    let body = app.island_body();
+    let (from, mon_w) = (app.selftest_island_centre(), app.selftest_monitor_width());
+    let want = poni_core::spot::fit_centre(from + DRAG_DX, mon_w, body.w, app.selftest_side_room());
+    let opened = app.selftest_drag(body.center(), DRAG_DX);
+    let to = app.selftest_island_centre();
+    let spot = app.st.settings.island_x;
+    let moved = (to - want).abs() <= 1.5 && spot.is_some_and(|x| (x * mon_w - to).abs() <= 1.5);
+    // A click on it where it went.
+    let clicked = app.selftest_press(app.island_body().center());
+    app.selftest_set_expanded(false);
+    let ok = moved && !opened && clicked;
+    let detail = format!(
+        "centre {from:.1} -> {to:.1} DIP across a {mon_w:.0} DIP screen (want {want:.1}), saved {spot:?}, {} after the drag, {} on a click there",
+        if opened { "opened" } else { "closed" },
+        if clicked { "opened" } else { "stayed closed" }
+    );
+    (ok, detail)
+}
+
+/// Off the middle, the island is whole on the screen: dragged, where the
+/// drag took it; open at the right edge, grown away from the edge.
+fn on_screen_check(app: &App, scene: Scene) -> Check {
+    let mon_w = app.selftest_monitor_width();
+    let body = app.island_body();
+    let centre = app.selftest_island_centre();
+    let side = app.selftest_side_room();
+    let (left, right) = (centre - body.w / 2.0 - side, centre + body.w / 2.0 + side);
+    let whole = left >= -0.5 && right <= mon_w + 0.5;
+    let placed = match scene {
+        // Against the right edge: no room left beside it.
+        Scene::IslandOpenAtEdge => right >= mon_w - 1.5,
+        _ => centre > mon_w / 2.0 + poni_core::spot::SNAP,
+    };
+    check(
+        "island-on-screen",
+        whole && placed,
+        format!("{left:.1}..{right:.1} DIP (body {:.0} wide, centre {centre:.1}) on a {mon_w:.0} DIP screen", body.w),
+    )
+}
+
 /// Running under Wine: its ntdll exports `wine_get_version`.
 fn under_wine() -> bool {
     use windows::core::{s, w};
@@ -1263,7 +1387,7 @@ const SAMPLE_SCRIPT: &str = "Hi everyone, this one takes two minutes. Today I'll
 Drop any file on the island and it waits on the Shelf. Press the phone button, scan the code, and the file is on your phone. \
 No cable, no account, nothing to install on the phone.\n\nThat's it. Thanks for watching.";
 
-const SCENES: [Scene; 133] = [
+const SCENES: [Scene; 144] = [
     Scene::IdleClock,
     Scene::IdleEyes,
     Scene::Media,
@@ -1393,15 +1517,15 @@ const SCENES: [Scene; 133] = [
     Scene::DownloadActivity,
     // The prayer countdown's OK, pressed: the closed island sings again.
     Scene::PrayerOk,
-    // The Notifications add-on: a message on the closed island (shown, and
-    // waiting for Show), then its page once Windows allows it, before
-    // Windows was asked, and in the download from GitHub.
+    // Notifications (the Store copy): a message on the closed island (shown,
+    // and waiting for Show), then its page once Windows allows it, before
+    // Windows was asked, and with no package.
     Scene::MessageNotice,
     Scene::MessageHidden,
     Scene::Page(PageKind::Notifications),
     Scene::NotifyAsk,
     Scene::NotifyNoPackage,
-    // The AI tab, a core tab after Focus, in every picture the page has
+    // The AI tab, with Studio Pro after Focus, in every picture the page has
     // (`AiPicture::ALL`): plans, troubles, nothing found, the first look,
     // Oyenza Inference connecting and connected, the Services list and a
     // key being typed there.
@@ -1426,8 +1550,10 @@ const SCENES: [Scene; 133] = [
     Scene::IeltsCueCard,
     Scene::IeltsResult,
     Scene::IeltsMicDenied,
-    // Settings' tabs row with two of the island's pages off the row.
+    // Settings' tabs row with two of the island's pages off the row, then in
+    // the Store copy, with Notifications' chip.
     Scene::SettingsTabs,
+    Scene::SettingsTabsStore,
     // Meeting notes: the page before a meeting (the notes saved last), Oyen
     // listening, writing, the notes, and the closed island while he listens,
     // all made up (`seed_notes`).
@@ -1439,6 +1565,23 @@ const SCENES: [Scene; 133] = [
     Scene::NotesPro,
     // The Add-ons page signed out, without Pro: no Downloader row.
     Scene::AddonsPro,
+    // The island dragged along the top edge, closed, then open at the edge.
+    Scene::IslandDrag,
+    Scene::IslandOpenAtEdge,
+    Scene::AddonsAbout,
+    // Prayer times following Muhammadiyah (its times and the KHGT date), and
+    // the place picker before anything is typed: the Kemenag / Muhammadiyah row.
+    Scene::PrayerMuhammadiyah,
+    Scene::PrayerPickerFollow,
+    // The Caffeine add-on on made-up days, each on a clock held at its own
+    // time (`caffeine::picture`): a day at 15:42 with its last call passed,
+    // Add a drink's kinds and a 2-shot es kopi susu, an empty morning and
+    // a late day over the limit.
+    Scene::Page(PageKind::Caffeine),
+    Scene::CaffeineKinds,
+    Scene::CaffeineAdd,
+    Scene::CaffeineEmpty,
+    Scene::CaffeineLate,
 ];
 
 impl Scene {
@@ -1479,6 +1622,7 @@ impl Scene {
             Scene::SystemWaiting => "page-system-waiting".into(),
             Scene::SettingsStayOnTop => "page-settings-stay-on-top".into(),
             Scene::SettingsTabs => "page-settings-tabs".into(),
+            Scene::SettingsTabsStore => "page-settings-tabs-store".into(),
             Scene::ShelfPairing => "page-shelf-pairing".into(),
             Scene::ShelfPaired => "page-shelf-paired".into(),
             Scene::ShelfPairedPhones => "page-shelf-paired-phones".into(),
@@ -1556,6 +1700,15 @@ impl Scene {
             Scene::NotesActivity => "notes-activity".into(),
             Scene::NotesPro => "page-notes-pro".into(),
             Scene::AddonsPro => "page-addons-pro".into(),
+            Scene::AddonsAbout => "page-addons-about".into(),
+            Scene::PrayerMuhammadiyah => "page-prayer-muhammadiyah".into(),
+            Scene::PrayerPickerFollow => "page-prayer-picker-follow".into(),
+            Scene::IslandDrag => "island-dragged".into(),
+            Scene::IslandOpenAtEdge => "island-open-at-edge".into(),
+            Scene::CaffeineKinds => "page-caffeine-kinds".into(),
+            Scene::CaffeineAdd => "page-caffeine-add".into(),
+            Scene::CaffeineEmpty => "page-caffeine-empty".into(),
+            Scene::CaffeineLate => "page-caffeine-late".into(),
         }
     }
 
@@ -1572,6 +1725,7 @@ impl Scene {
             | Scene::SettingsSignedIn
             | Scene::SettingsStayOnTop
             | Scene::SettingsTabs
+            | Scene::SettingsTabsStore
             | Scene::SettingsAsideStay
             | Scene::SettingsUpdate
             | Scene::UpdateSheet
@@ -1589,12 +1743,12 @@ impl Scene {
             Scene::ShelfPairing | Scene::ShelfPaired | Scene::ShelfPairedPhones => Some(PageKind::Shelf),
             Scene::AddonsDownloading | Scene::AddonsOn | Scene::AddonsOffline | Scene::AddonsFailed => Some(PageKind::Addons),
             Scene::JaOffer | Scene::JaGetting => Some(PageKind::Media),
-            Scene::PrayerPicker | Scene::PrayerPickerWorld | Scene::PrayerWorld => Some(PageKind::Prayer),
+            Scene::PrayerPicker | Scene::PrayerPickerWorld | Scene::PrayerWorld | Scene::PrayerMuhammadiyah | Scene::PrayerPickerFollow => Some(PageKind::Prayer),
             Scene::ScriptReading | Scene::ScriptRecorder => Some(PageKind::Script),
             Scene::TodayDay | Scene::TodayNoApps | Scene::TodayTiles | Scene::TodayOff | Scene::TodayPicked => Some(PageKind::Today),
             Scene::StocksPicked | Scene::StocksSearch | Scene::StocksEdit => Some(PageKind::Stocks),
             Scene::RecordLive => Some(PageKind::Record),
-            Scene::AddonsRecorder | Scene::AddonsDownloader | Scene::AddonsPro => Some(PageKind::Addons),
+            Scene::AddonsRecorder | Scene::AddonsDownloader | Scene::AddonsPro | Scene::AddonsAbout => Some(PageKind::Addons),
             Scene::DownloadsEmpty => Some(PageKind::Downloads),
             Scene::NotifyAsk | Scene::NotifyNoPackage => Some(PageKind::Notifications),
             Scene::Ai(_) => Some(PageKind::Ai),
@@ -1602,6 +1756,20 @@ impl Scene {
                 Some(PageKind::Ielts)
             }
             Scene::NotesListening | Scene::NotesWriting | Scene::NotesReady | Scene::NotesPro => Some(PageKind::Notes),
+            Scene::IslandOpenAtEdge => Some(PageKind::Media),
+            Scene::CaffeineKinds | Scene::CaffeineAdd | Scene::CaffeineEmpty | Scene::CaffeineLate => Some(PageKind::Caffeine),
+            _ => None,
+        }
+    }
+
+    /// The Caffeine page's picture in its scenes.
+    fn caffeine(self) -> Option<CaffeinePicture> {
+        match self {
+            Scene::Page(PageKind::Caffeine) => Some(CaffeinePicture::Day),
+            Scene::CaffeineKinds => Some(CaffeinePicture::Kinds),
+            Scene::CaffeineAdd => Some(CaffeinePicture::Add),
+            Scene::CaffeineEmpty => Some(CaffeinePicture::Empty),
+            Scene::CaffeineLate => Some(CaffeinePicture::Late),
             _ => None,
         }
     }
@@ -1612,8 +1780,8 @@ impl Scene {
         matches!(self, Scene::Page(PageKind::Downloads) | Scene::DownloadsEmpty | Scene::AddonsDownloader | Scene::DownloadActivity | Scene::AddonsPro)
     }
 
-    /// Signed in to an account with Studio Pro: the Downloader's own
-    /// scenes, which only Pro shows.
+    /// Signed in to an account with Studio Pro: the Downloader's own scenes
+    /// and the AI tab's, which only Pro shows.
     fn pro(self) -> bool {
         matches!(
             self,
@@ -1621,6 +1789,7 @@ impl Scene {
                 | Scene::DownloadsEmpty
                 | Scene::AddonsDownloader
                 | Scene::DownloadActivity
+                | Scene::Ai(_)
         )
     }
 
@@ -1694,7 +1863,12 @@ impl Scene {
     }
 
     fn media_playing(self) -> bool {
-        matches!(self, Scene::Media | Scene::MediaTimer | Scene::MediaLyric | Scene::AsideLyric | Scene::AsidePeek | Scene::PrayerOk) || self.expanded()
+        matches!(self, Scene::Media | Scene::MediaTimer | Scene::MediaLyric | Scene::AsideLyric | Scene::AsidePeek | Scene::PrayerOk | Scene::IslandDrag) || self.expanded()
+    }
+
+    /// The island is off the middle of the screen.
+    fn moved(self) -> bool {
+        matches!(self, Scene::IslandDrag | Scene::IslandOpenAtEdge)
     }
 
     /// A maximized window is under the island.
@@ -1710,6 +1884,323 @@ impl Scene {
     fn timer_running(self) -> bool {
         matches!(self, Scene::Timer | Scene::MediaTimer) || self.expanded()
     }
+}
+
+// ---------------------------------------------------------------- the Diorama theme's pictures
+
+/// One of the Diorama theme's own pictures: its resting pill at a set time
+/// on [`REST_DAY`], and what else it shows. Taken after the scenes, in
+/// Diorama runs only, as `diorama-<name>.png`.
+#[derive(Clone, Copy, Debug)]
+struct Rest {
+    name: &'static str,
+    hour: u8,
+    minute: u8,
+    /// A 12-hour clock ("5:05 PM").
+    h12: bool,
+    /// Beside the time: the bolt while the battery charges, the red
+    /// battery when it runs low.
+    badge: Option<Badge>,
+    /// The Minimal look: the place alone, no time in its sky.
+    minimal: bool,
+    /// The pointer rests on the pill: it swells.
+    hover: bool,
+    /// The sun sets a minute later: the picture is the glass ball halfway
+    /// to the tree (`SelfTest::sunset`).
+    roll: bool,
+    /// Slid by hand: the picture is the glass ball held halfway, at the
+    /// sunset it passes (`SelfTest::slide`).
+    slide: bool,
+}
+
+impl Rest {
+    const fn at(name: &'static str, hour: u8, minute: u8) -> Rest {
+        Rest { name, hour, minute, h12: false, badge: None, minimal: false, hover: false, roll: false, slide: false }
+    }
+
+    fn time(&self) -> LocalDateTime {
+        LocalDateTime { year: REST_DAY.0, month: REST_DAY.1, day: REST_DAY.2, hour: self.hour, minute: self.minute, second: 0 }
+    }
+
+    /// The battery that puts its badge beside the time: on the charger,
+    /// run low, or the scenes' own (76 %, no badge).
+    fn power(&self) -> PowerState {
+        match self.badge {
+            Some(Badge::Charging) => fake_power(true),
+            Some(Badge::Low(percent)) => PowerState { percent, ..fake_power(false) },
+            None => fake_power(false),
+        }
+    }
+}
+
+/// The day every Diorama picture is taken on: the moon three days past full.
+const REST_DAY: (i32, u8, u8) = (2026, 10, 29);
+
+static RESTS: [Rest; 15] = [
+    // The day's hours, then the night's.
+    Rest::at("dawn", 6, 10),
+    Rest::at("morning", 10, 8),
+    // The cat naps under the tree.
+    Rest::at("noon", 12, 30),
+    Rest::at("golden-hour", 17, 40),
+    Rest::at("dusk", 18, 20),
+    Rest::at("night", 21, 30),
+    // Lights out: the window is dark from midnight to five.
+    Rest::at("small-hours", 2, 30),
+    // What makes the pill wider: a 12-hour clock, a badge, both ("12:59 PM"
+    // is the widest time).
+    Rest { h12: true, ..Rest::at("12-hour", 17, 5) },
+    Rest { badge: Some(Badge::Charging), ..Rest::at("charging", 14, 5) },
+    Rest { badge: Some(Badge::Low(LOW_BATTERY)), ..Rest::at("low-battery", 21, 30) },
+    Rest { h12: true, badge: Some(Badge::Charging), ..Rest::at("12-hour-charging", 12, 59) },
+    Rest { minimal: true, ..Rest::at("minimal", 10, 8) },
+    Rest { hover: true, ..Rest::at("hover", 10, 8) },
+    // The last two hold the app's clock for a moment. The morning, then the
+    // ball slid halfway by hand, let go and tapped back.
+    Rest { slide: true, ..Rest::at("slide", 10, 8) },
+    // The minute before sunset, then the ball on its way.
+    Rest { roll: true, ..Rest::at("roll", 17, 59) },
+];
+
+/// The sun's hours in every Diorama picture, in minutes of the day: six to
+/// six, the house's own day (`pill::diorama`), as no scene that rests has a
+/// place for the Prayer times add-on to take them from.
+const HOUSE_DAY: (f32, f32) = (360.0, 1080.0);
+/// The glass ball's roll from one end of the pane to the other (seconds).
+const ROLL_S: f64 = 1.5;
+/// 1 January 2000 in days since 1970, where `Moment::day` counts from.
+const DAY_ZERO: i64 = 10_957;
+
+/// What a capture shows: scene `i` of [`SCENES`], or the Diorama theme's own
+/// picture `RESTS[k]`.
+#[derive(Clone, Copy, Debug)]
+enum Shot {
+    Scene(usize),
+    Rest(usize),
+}
+
+/// What a picture of the Diorama theme's resting pill should show.
+struct Sight {
+    /// The moment `studio_diorama` paints: the app's clock on the house's
+    /// own day, the ball where that time rests it.
+    moment: Moment,
+    /// The pill swells under the pointer.
+    lifted: bool,
+    /// In words, for the report.
+    what: String,
+}
+
+impl Sight {
+    /// From the app's state as the frame just drawn saw it. `rest` is the
+    /// Diorama picture it is, or none for a scene (the battery at 76 %, not
+    /// charging: no badge).
+    fn of(st: &AppState, rest: Option<&Rest>) -> Sight {
+        let l = &st.local;
+        // The time is in the sky for the clock (and a status bar left from
+        // Pill); Minimal is the place alone, and so is a setting left on Eyes.
+        let timed = matches!(st.settings.idle_style, IdleStyle::Clock | IdleStyle::Status);
+        let clock = timed.then_some(Clock { hour: l.hour, minute: l.minute, h24: st.settings.use_24h });
+        let badge = rest.and_then(|r| r.badge);
+        let mut moment = Moment {
+            minute: (l.hour as u32 * 60 + l.minute as u32) as f32,
+            sunrise: HOUSE_DAY.0,
+            sunset: HOUSE_DAY.1,
+            day: (days_from_civil(l.year, l.month, l.day) - DAY_ZERO) as i32,
+            lens: 0.0,
+            clock,
+            badge,
+            dark: None,
+        };
+        moment.lens = moment.rest_lens();
+        let what = format!(
+            "{:02}:{:02} on {}, {}{}, the ball on the {}",
+            l.hour,
+            l.minute,
+            l.day_key(),
+            match clock {
+                Some(c) if c.h24 => "a 24-hour clock",
+                Some(_) => "a 12-hour clock",
+                None => "no clock",
+            },
+            match badge {
+                Some(Badge::Charging) => " with the charging bolt",
+                Some(Badge::Low(_)) => " with the low battery",
+                None => "",
+            },
+            if moment.night() { "tree" } else { "house" }
+        );
+        Sight { moment, lifted: rest.is_some_and(|r| r.hover), what }
+    }
+
+    /// The pill's size at rest, and as the island shows it (6 DIPs more
+    /// each way under the pointer).
+    fn sizes(&self) -> ((f32, f32), (f32, f32)) {
+        let rest = (studio_diorama::width(self.moment.clock, self.moment.badge), studio_diorama::H);
+        let lift = if self.lifted { 2.0 * crate::pill::motion::HOVER_OUTSET } else { 0.0 };
+        (rest, (rest.0 + lift, rest.1 + lift))
+    }
+}
+
+/// How much of a captured pill is `studio_diorama`'s picture of `m`: the
+/// pixels at least 1 DIP inside its outline (the edge is anti-aliased onto
+/// the island under it) that match within [`PICTURE_TOLERANCE`], out of how
+/// many, and the largest difference in a channel. The picture is drawn
+/// pixel for pixel, so they all should. `body` is the island's body in the
+/// window's DIPs and `origin` the frame's first pixel in the window: the
+/// app puts the picture on the window's whole pixels, and half a pixel
+/// rounds one way there and another from the frame's corner.
+fn picture_match(frame: &Frame, body: Rect, origin: (i32, i32), scale: f32, m: &Moment, rest: (f32, f32), shown: (f32, f32)) -> (usize, usize, u8) {
+    // Where `pill::diorama::draw` puts it: the body's top middle, on whole pixels.
+    let at = crate::pill::shape::snap(Rect::new(body.center().x - shown.0 / 2.0, body.y, shown.0, shown.1), scale);
+    let p = studio_diorama::render(m, &View { w: at.w, h: at.h, rest_w: rest.0, rest_h: rest.1, scale });
+    let (x0, y0) = ((at.x * scale).round() as i32 - origin.0, (at.y * scale).round() as i32 - origin.1);
+    let (bw, bh) = (p.w as f32 / scale, p.h as f32 / scale);
+    let r = bw.min(bh) / 2.0;
+    let (mut same, mut total, mut worst) = (0, 0, 0u8);
+    for j in 0..p.h as i32 {
+        for i in 0..p.w as i32 {
+            let (x, y) = ((i as f32 + 0.5) / scale, (j as f32 + 0.5) / scale);
+            let ax = x.clamp(r, (bw - r).max(r));
+            if r - (x - ax).hypot(y - bh / 2.0) < 1.0 {
+                continue;
+            }
+            let o = ((j as u32 * p.w + i as u32) * 4) as usize;
+            let got = frame.at(x0 + i, y0 + j);
+            let off = (0..3).map(|c| got[c].abs_diff(p.bgra[o + c])).max().unwrap_or(0);
+            total += 1;
+            same += usize::from(off <= PICTURE_TOLERANCE && got[3] == 255);
+            worst = worst.max(off);
+        }
+    }
+    (same, total, worst)
+}
+
+/// A channel of the captured pill may be this far from the picture's (the
+/// renderer's rounding), and this share of its pixels must be within it:
+/// a digit of the time that differs is already more than the rest.
+const PICTURE_TOLERANCE: u8 = 3;
+const PICTURE_SHARE: f32 = 0.995;
+
+fn picture_ok(m: (usize, usize, u8)) -> bool {
+    m.1 > 0 && m.0 as f32 >= m.1 as f32 * PICTURE_SHARE
+}
+
+/// Perceived lightness of a `[b, g, r, a]` pixel, 0..=255.
+fn luma(p: [u8; 4]) -> f32 {
+    0.114 * p[0] as f32 + 0.587 * p[1] as f32 + 0.299 * p[2] as f32
+}
+
+/// The Diorama frame's colour by day, of a `[b, g, r, a]` pixel: light, no
+/// bluer than red (cream).
+fn cream_frame(p: [u8; 4]) -> bool {
+    luma(p) >= 150.0 && p[2] >= p[0]
+}
+
+/// The Diorama frame's colour at night: dark, bluer than red (indigo).
+fn indigo_frame(p: [u8; 4]) -> bool {
+    luma(p) <= 110.0 && p[0] > p[2]
+}
+
+/// The Diorama theme's own checks for a picture of its resting pill, in the
+/// captured `frame` (`body` and `origin` as for [`picture_match`]; `geom`
+/// is what `pill::diorama` asks the island for).
+/// Its size: `studio_diorama::width` by 38 DIPs with round ends (radius 19),
+/// 6 more each way under the pointer, measured in the pixels too. Not a
+/// black capsule: its frame is cream by day and indigo at night, its sky
+/// light at midday and dark deep in the night. And it is `studio_diorama`'s
+/// picture of the moment, which puts the time in the sky and the glass ball
+/// on the house by day, on the tree at night.
+fn diorama_checks(frame: &Frame, body: Rect, origin: (i32, i32), scale: f32, s: &Sight, geom: Option<Geom>, checks: &mut Vec<Check>) {
+    let (rest, shown) = s.sizes();
+    let m = &s.moment;
+    let want = Geom::new(rest.0, rest.1, rest.1 / 2.0);
+    let lifted = if s.lifted { " under the pointer" } else { "" };
+    checks.push(check(
+        "diorama-size",
+        geom == Some(want) && (body.w - shown.0).abs() < 0.5 && (body.h - shown.1).abs() < 0.5,
+        format!(
+            "body {:.1}x{:.1} DIP, want {:.0}x{:.0}{lifted}; at rest the island is asked for {geom:?}, want {:.0}x{:.0} with radius {:.0}",
+            body.w, body.h, shown.0, shown.1, rest.0, rest.1, want.r
+        ),
+    ));
+
+    // The outline as drawn (on the window's whole pixels), in the frame's
+    // DIPs: as tall as that in the middle column, as wide in the middle
+    // row, and 3 DIPs under its top edge as much shorter as round ends of
+    // half its height leave it.
+    let b = crate::pill::shape::snap(body, scale).offset(-(origin.0 as f32) / scale, -(origin.1 as f32) / scale);
+    let (cx, cy) = (((b.x + b.w / 2.0) * scale).floor() as i32, ((b.y + b.h / 2.0) * scale).floor() as i32);
+    let row = ((b.y + 3.0) * scale).round() as i32;
+    let depth = (row as f32 + 0.5) / scale - b.y;
+    let r = b.h / 2.0;
+    let chord = b.w - 2.0 * r + 2.0 * (r * r - (r - depth) * (r - depth)).max(0.0).sqrt();
+    let (tall, wide, near_top) = (frame.opaque_rise(cx, cy), frame.opaque_run(cx, cy), frame.opaque_run(cx, row));
+    let close = |px: i32, dip: f32| (px as f32 - dip * scale).abs() <= 2.0;
+    checks.push(check(
+        "diorama-capsule",
+        close(tall, b.h) && close(wide, b.w) && close(near_top, chord),
+        format!(
+            "{tall} px tall and {wide} px wide through the middle (want {:.1} and {:.1}), {near_top} px wide {depth:.2} DIP under the top edge (want {:.1}: ends of radius {r:.1})",
+            b.h * scale,
+            b.w * scale,
+            chord * scale
+        ),
+    ));
+
+    // The frame, halfway through its thickness at the top, the bottom and
+    // both ends. While the ball rolls it is between its two colours.
+    let mid = studio_diorama::BEZEL / 2.0;
+    let px = |x: f32, y: f32| frame.at((x * scale).floor() as i32, (y * scale).floor() as i32);
+    let (mx, my) = (b.x + b.w / 2.0, b.y + b.h / 2.0);
+    let ring = [px(mx, b.y + mid), px(mx, b.bottom() - mid), px(b.x + mid, my), px(b.right() - mid, my)];
+    let (cream, indigo) = (cream_frame, indigo_frame);
+    let said = ring.map(|[b, g, r, _]| format!("rgb({r}, {g}, {b})")).join(", ");
+    if m.lens <= 0.0 {
+        checks.push(check("diorama-frame", ring.into_iter().all(cream), format!("top, bottom, left, right: {said}; want cream (light, no bluer than red) by day")));
+    } else if m.lens >= 1.0 {
+        checks.push(check("diorama-frame", ring.into_iter().all(indigo), format!("top, bottom, left, right: {said}; want indigo (dark, bluer than red) at night")));
+    }
+    if s.lifted {
+        // The frame swells with the body and the pane keeps its size: 4 DIPs
+        // inside the top edge is frame, where the pill at rest has its sky.
+        let p = px(mx, b.y + 4.0);
+        let frame_there = if m.night() { indigo(p) } else { cream(p) };
+        checks.push(check(
+            "diorama-lift",
+            frame_there && (body.w - rest.0 - 6.0).abs() < 0.5 && (body.h - rest.1 - 6.0).abs() < 0.5,
+            format!("body {:.1}x{:.1} DIP around a {:.0}x{:.0} pill (want 6 more each way); 4 DIPs inside the top edge rgb({}, {}, {}), want the frame's colour", body.w, body.h, rest.0, rest.1, p[2], p[1], p[0]),
+        ));
+    }
+
+    // The sky between the house and the tree, above the time: its usual
+    // pixel (the median, which a cloud, a star or the moon doesn't move).
+    // Around sunrise and sunset it is whatever the hour paints.
+    let day = m.minute >= m.sunrise + 90.0 && m.minute <= m.sunset - 90.0;
+    let deep_night = m.minute >= m.sunset + 60.0 || m.minute <= m.sunrise - 60.0;
+    if (day && m.lens <= 0.0) || (deep_night && m.lens >= 1.0) {
+        // The pane keeps the pill's resting size, centred in the body. In
+        // its pixels (DIPs at rest): the time is written from row 10 down,
+        // the house's end is 30 wide and the tree's 31.
+        let (ox, oy) = (b.x + (b.w - rest.0) / 2.0, b.y + (b.h - rest.1) / 2.0);
+        let at = |v: f32| (v * scale).round() as i32;
+        let mut lumas = Vec::new();
+        for y in at(oy + 5.0)..at(oy + 9.0) {
+            for x in at(ox + 32.0)..at(ox + rest.0 - 33.0) {
+                lumas.push(luma(frame.at(x, y)));
+            }
+        }
+        lumas.sort_by(|a, b| a.total_cmp(b));
+        let sky = lumas.get(lumas.len() / 2).copied().unwrap_or(-1.0);
+        let (ok, want) = if day { (sky >= 120.0, "light by day (120 or more)") } else { ((0.0..=70.0).contains(&sky), "dark at night (70 or less)") };
+        checks.push(check("diorama-sky", ok, format!("the sky above the time has lightness {sky:.0} of 255 (the median of {} pixels), want {want}", lumas.len())));
+    }
+
+    let seen = picture_match(frame, body, origin, scale, m, rest, shown);
+    checks.push(check(
+        "diorama-picture",
+        picture_ok(seen),
+        format!("{} of {} pixels inside the pill are studio_diorama's picture of {} (largest difference in a channel: {})", seen.0, seen.1, s.what, seen.2),
+    ));
 }
 
 /// GET the phone page from a running Phone drop server: the address must be
@@ -2250,11 +2741,19 @@ enum Phase {
     /// Scene `i` shows the prayer countdown; once it rests with its OK
     /// drawn, press OK (`Scene::PrayerOk`).
     PressOk { i: usize, since: f64 },
+    /// Scene `i` has a song on the closed island; once it rests, drag it
+    /// to the right (`Scene::IslandDrag`).
+    Drag { i: usize, since: f64 },
     /// The IELTS coach's one turn against a server of the self-test's own
     /// (Classic runs only; see [`IeltsRun`]).
     Ielts { since: f64 },
     /// After the IELTS turn: one meeting handed over end to end (`NotesRun`).
     Notes { since: f64 },
+    /// The Diorama theme's own pictures of its resting pill, `RESTS[k]`,
+    /// each settled like a scene. Diorama runs only: after the scenes and
+    /// the Settings window (or the scene deadline), or with
+    /// PONI_SELFTEST_DIORAMA=only from the start.
+    Rests { k: usize, since: f64, steps: u32, stable: u32 },
     Finish { since: f64 },
     Done(i32),
 }
@@ -2287,8 +2786,18 @@ pub struct SelfTest {
     /// the next line on a held clock, one frame per refresh at that rate.
     scroll_hz: Option<f64>,
     dpi_applied: bool,
-    /// PONI_SELFTEST_THEME=oyen|glass|pill: run every scene in that theme.
+    /// PONI_SELFTEST_THEME=oyen|glass|pill|diorama: run every scene in that theme.
     theme: Theme,
+    /// PONI_SELFTEST_DIORAMA=only, in the Diorama theme: its own pictures
+    /// (`RESTS`) and no scene.
+    rests_only: bool,
+    /// The Diorama theme's scenes: the clock they are held at (its
+    /// pictures hold their own), and whether that is night
+    /// (PONI_SELFTEST_DIORAMA=night).
+    diorama_clock: Option<(LocalDateTime, bool)>,
+    /// The clock's 12 or 24 hours as the run found them: the Diorama
+    /// pictures change the setting and put it back.
+    use_24h: bool,
     /// Glass: which page is under the island (PONI_SELFTEST_GLASS), the
     /// window size its backdrop was drawn for, and the scene last seeded.
     glass: Option<GlassRun>,
@@ -2343,10 +2852,24 @@ const SCROLL_FILM_S: f64 = 1.3;
 impl SelfTest {
     pub fn new(dir: String) -> Self {
         let track_key = MediaSession::make_track_key(TITLE, ARTIST, ALBUM);
+        let theme = match std::env::var("PONI_SELFTEST_THEME").map(|v| v.trim().to_ascii_lowercase()).as_deref() {
+            Ok("oyen") => Theme::Oyen,
+            Ok("glass") => Theme::Glass,
+            Ok("pill") => Theme::Pill,
+            Ok("diorama") => Theme::Diorama,
+            _ => Theme::Classic,
+        };
+        let diorama_run = std::env::var("PONI_SELFTEST_DIORAMA").map(|v| v.trim().to_ascii_lowercase()).unwrap_or_default();
+        let rests_only = theme == Theme::Diorama && diorama_run == "only";
+        // The day the run starts, at a time in the morning (or the night):
+        // the scenes' look never depends on when CI runs them.
+        let night_run = diorama_run == "night";
+        let (hour, minute) = if night_run { (21, 30) } else { (10, 8) };
+        let diorama_clock = (theme == Theme::Diorama).then(|| (LocalDateTime { hour, minute, second: 0, ..clock::local_now() }, night_run));
         Self {
             dir: PathBuf::from(dir),
             t0: Instant::now(),
-            phase: Phase::Settle { i: 0, since: 0.0, steps: 0, stable: 0 },
+            phase: if rests_only { Phase::Rests { k: 0, since: 0.0, steps: 0, stable: 0 } } else { Phase::Settle { i: 0, since: 0.0, steps: 0, stable: 0 } },
             art: None,
             art_color: None,
             lyrics: LyricsState { track_key: track_key.clone(), ..Default::default() },
@@ -2363,12 +2886,10 @@ impl SelfTest {
             media_loop: std::env::var("PONI_SELFTEST_LOOP").is_ok_and(|v| v.trim() == "1"),
             scroll_hz: std::env::var("PONI_SELFTEST_SCROLL").ok().and_then(|v| v.trim().parse().ok()).filter(|hz: &f64| (20.0..=500.0).contains(hz)),
             dpi_applied: false,
-            theme: match std::env::var("PONI_SELFTEST_THEME").map(|v| v.trim().to_ascii_lowercase()).as_deref() {
-                Ok("oyen") => Theme::Oyen,
-                Ok("glass") => Theme::Glass,
-                Ok("pill") => Theme::Pill,
-                _ => Theme::Classic,
-            },
+            theme,
+            rests_only,
+            diorama_clock,
+            use_24h: true,
             glass: None,
             budget_ms: FRAME_BUDGET_MS,
             slow_frames: Vec::new(),
@@ -2427,6 +2948,7 @@ impl SelfTest {
         st.volume = VolumeState { level: 0.64, muted: false, known: true };
         st.power = fake_power(false);
         st.stats = fake_stats();
+        self.use_24h = st.settings.use_24h;
 
         // Album art + lyrics.
         let art = ImageData::new(ART_PX, ART_PX, make_art(ART_PX));
@@ -2581,9 +3103,14 @@ impl SelfTest {
         self.renderer = app.renderer();
         let now = clock::mono();
         let elapsed = self.t0.elapsed().as_secs_f64();
-        // The IELTS run keeps its own time (each of its steps has a budget).
+        // The IELTS run keeps its own time (each of its steps has a budget),
+        // and so do the Diorama theme's pictures (each has a scene's time to
+        // settle): they come after a whole Pill run's worth of scenes.
         if elapsed > SCENE_DEADLINE
-            && !matches!(self.phase, Phase::Finish { .. } | Phase::Done(_) | Phase::Anim { .. } | Phase::Loop | Phase::Scroll | Phase::Ielts { .. } | Phase::Notes { .. })
+            && !matches!(
+                self.phase,
+                Phase::Finish { .. } | Phase::Done(_) | Phase::Anim { .. } | Phase::Loop | Phase::Scroll | Phase::Ielts { .. } | Phase::Notes { .. } | Phase::Rests { .. }
+            )
         {
             let at = match &self.phase {
                 Phase::Settle { i, .. } | Phase::Click { i } | Phase::ClickWait { i, .. } => SCENES[*i].name(),
@@ -2591,7 +3118,14 @@ impl SelfTest {
             };
             crate::pwarn!("selftest: deadline reached while at '{at}'");
             self.checks.push(check("deadline", false, format!("stopped after {elapsed:.1} s at '{at}'")));
-            self.phase = Phase::Finish { since: now };
+            // The scenes stop here. The Diorama theme's own pictures are
+            // still taken: they are what its run is for, and a few seconds.
+            self.phase = if self.theme == Theme::Diorama {
+                app.selftest_close_settings();
+                Phase::Rests { k: 0, since: now, steps: 0, stable: 0 }
+            } else {
+                Phase::Finish { since: now }
+            };
         }
 
         match self.phase {
@@ -2630,7 +3164,7 @@ impl SelfTest {
                 let blinking = (scene == Scene::IdleEyes && mid_blink()) || (scene.expanded() && crate::oyen::mid_rest_move(clock::mono(), 0.3));
                 let ready = steps >= MIN_STEPS && stable >= STABLE_STEPS && !blinking;
                 if ready || timed_out {
-                    self.capture(app, i, !timed_out || settled, waited);
+                    self.capture(app, Shot::Scene(i), !timed_out || settled, waited);
                     self.phase = self.next_phase(i + 1, now);
                 } else {
                     self.phase = Phase::Settle { i, since, steps, stable };
@@ -2711,9 +3245,37 @@ impl SelfTest {
                 // then General and Appearance light.
                 let mut list: Vec<_> = crate::settings_window::sections(&app.st).into_iter().map(|s| (s, false)).collect();
                 list.extend([(crate::settings_window::Section::General, true), (crate::settings_window::Section::Appearance, true)]);
+                // AI usage takes Studio Pro: its section as an account with Pro has it.
+                let ai = crate::settings_window::Section::Ai;
+                if !list.contains(&(ai, false)) {
+                    list.push((ai, false));
+                }
+                // Prayer times has a section only while its add-on is on: as it is then.
+                let prayer = crate::settings_window::Section::Prayer;
+                if !list.contains(&(prayer, false)) {
+                    list.push((prayer, false));
+                }
                 match list.get(k) {
                     Some(&(section, light)) => {
+                        let was = (app.st.oyenza.link.clone(), app.st.oyenza.pro);
+                        if section == ai {
+                            app.st.oyenza.link = OyenzaLink::Connected { account: "a\u{2022}\u{2022}\u{2022}@example.com".into() };
+                            app.st.oyenza.pro = Some(true);
+                        }
+                        let prayer_was = (app.st.addons.get(PRAYER_TIMES.id).cloned(), app.st.prayer.places.clone());
+                        if section == prayer {
+                            app.st.addons.insert(PRAYER_TIMES.id, AddonStatus::Ready);
+                            app.st.prayer.places.get_or_insert_with(|| std::sync::Arc::new(PlaceList::parse(SAMPLE_PLACES).expect("sample places")));
+                        }
                         let (w, h, px) = app.selftest_settings_shot(section, light);
+                        (app.st.oyenza.link, app.st.oyenza.pro) = was;
+                        if section == prayer {
+                            match prayer_was.0 {
+                                Some(a) => app.st.addons.insert(PRAYER_TIMES.id, a),
+                                None => app.st.addons.remove(PRAYER_TIMES.id),
+                            };
+                            app.st.prayer.places = prayer_was.1;
+                        }
                         let name = format!("settings-window-{}{}", section.key(), if light { "-light" } else { "" });
                         let sized = w > 0 && h > 0 && px.len() == (w as usize) * (h as usize) * 4;
                         // The card is opaque where the sidebar meets the content.
@@ -2830,6 +3392,18 @@ impl SelfTest {
                     self.phase = Phase::Settle { i, since: now, steps: 0, stable: 0 };
                 }
             }
+            Phase::Drag { i, since } => {
+                // In the middle, closed and still, then a real press on it, a
+                // move sideways and the release: it moves and stays closed.
+                // Then a click on it where it went: that still opens it.
+                self.apply(app, SCENES[i]);
+                let still = app.selftest_settled() && !app.selftest_expanded() && app.st.settings.island_x.is_none();
+                if still || now - since > self.settle_limit(app) {
+                    let (ok, detail) = if still { drag_check(app) } else { (false, "the island never rested closed in the middle".to_string()) };
+                    self.checks.push(check("island-drag", ok, detail));
+                    self.phase = Phase::Settle { i, since: now, steps: 0, stable: 0 };
+                }
+            }
             Phase::Ielts { since } => {
                 let run = self.ielts.get_or_insert_with(|| IeltsRun::begin(app));
                 if let Some(c) = run.step(app, now - since) {
@@ -2846,10 +3420,37 @@ impl SelfTest {
                     self.phase = self.after_scenes(clock::mono());
                 }
             }
+            Phase::Rests { k, since, steps, stable } => {
+                // As a scene settles: the picture's state on every step, and
+                // the capture once the island rests in it.
+                let since = if steps == 0 { now } else { since };
+                self.apply_rest(app, &RESTS[k]);
+                let settled = app.selftest_settled();
+                let stable = if settled { stable + 1 } else { 0 };
+                let steps = steps + 1;
+                let waited = now - since;
+                let timed_out = waited > self.settle_limit(app);
+                if (steps >= MIN_STEPS && stable >= STABLE_STEPS) || timed_out {
+                    self.capture(app, Shot::Rest(k), !timed_out || settled, waited);
+                    if k + 1 < RESTS.len() {
+                        self.phase = Phase::Rests { k: k + 1, since: now, steps: 0, stable: 0 };
+                    } else {
+                        // The PC's own clock again, and its 12 or 24 hours.
+                        clock::hold_local(None);
+                        crate::pill::hold_night(None);
+                        app.st.settings.use_24h = self.use_24h;
+                        self.phase = self.after_scenes(clock::mono());
+                    }
+                } else {
+                    self.phase = Phase::Rests { k, since, steps, stable };
+                }
+            }
             Phase::Finish { since } => {
                 let all_done = self.writes.iter().all(|(_, h)| h.is_finished());
                 let deadline = if self.anim || self.media_loop || self.scroll_hz.is_some() { WRITE_DEADLINE + 40.0 } else { WRITE_DEADLINE };
-                if all_done || elapsed > deadline {
+                // The writers' time counts from the last capture where that
+                // came after the scene deadline (the Diorama theme's pictures).
+                if all_done || (elapsed > deadline && now - since > WRITE_DEADLINE - SCENE_DEADLINE) {
                     let code = self.finish(all_done, now - since);
                     self.phase = Phase::Done(code);
                     return Some(code);
@@ -2864,6 +3465,7 @@ impl SelfTest {
         match SCENES.get(i) {
             Some(Scene::TabClick | Scene::GearClick) => Phase::Click { i },
             Some(Scene::PrayerOk) => Phase::PressOk { i, since: now },
+            Some(Scene::IslandDrag) => Phase::Drag { i, since: now },
             Some(_) => Phase::Settle { i, since: now, steps: 0, stable: 0 },
             // Advanced settings opening the Settings window, then its
             // sections (not over the Glass backdrops).
@@ -2877,8 +3479,21 @@ impl SelfTest {
         // One IELTS turn end to end, in the plain Classic runs.
         if self.theme == Theme::Classic && self.glass.is_none() {
             Phase::Ielts { since: now }
+        } else if self.theme == Theme::Diorama {
+            // The Diorama theme's own pictures of its resting pill.
+            Phase::Rests { k: 0, since: now, steps: 0, stable: 0 }
         } else {
             self.after_scenes(now)
+        }
+    }
+
+    /// How many pictures the run takes: every scene and, in the Diorama
+    /// theme, its own pictures of its resting pill (or those alone).
+    fn shots(&self) -> usize {
+        if self.rests_only {
+            RESTS.len()
+        } else {
+            SCENES.len() + if self.theme == Theme::Diorama { RESTS.len() } else { 0 }
         }
     }
 
@@ -3051,7 +3666,25 @@ impl SelfTest {
         };
         if st.settings.theme != self.theme {
             st.settings.theme = self.theme;
-            st.accent = if self.theme == Theme::Oyen { crate::oyen::ORANGE } else { palette::BLUE };
+            st.accent = match self.theme {
+                Theme::Oyen => crate::oyen::ORANGE,
+                // Diorama's own, as the app keeps it (`theme_accent`).
+                Theme::Diorama => poni_core::look::DIORAMA_ACCENT,
+                _ => palette::BLUE,
+            };
+        }
+        // Diorama's glass ball rests where the time has it in every picture:
+        // it would roll in as the theme is picked, and across if the sun
+        // set or rose during the run.
+        if self.theme == Theme::Diorama {
+            crate::pill::diorama::settle();
+        }
+        // Diorama's scenes on the run's held clock, in its day or night look
+        // (held too: with a Prayer times place the sun is that place's, at
+        // its real hour).
+        if let Some((at, night)) = self.diorama_clock {
+            clock::hold_local(Some(at));
+            crate::pill::hold_night(Some(night));
         }
         if let Some(run) = self.glass {
             // What's under the window: drawn again whenever the window grows.
@@ -3088,6 +3721,12 @@ impl SelfTest {
         st.settings.hidden_tabs = if scene == Scene::SettingsTabs { vec!["today".into(), "tasks".into()] } else { Vec::new() };
         // Step aside is off in the app since 0.2.6; the self-test keeps drawing what's left of it.
         st.settings.step_aside = scene != Scene::SettingsAsideStay;
+        // In the middle, except where the drag left it (`Phase::Drag`) and at the right edge.
+        st.settings.island_x = match scene {
+            Scene::IslandDrag => st.settings.island_x,
+            Scene::IslandOpenAtEdge => Some(1.0),
+            _ => None,
+        };
         // A later version offered, only where Settings shows it. A copy from
         // GitHub reads the update file itself, so Settings has Check now.
         let looks = crate::state::UpdateView { looks: true, ..Default::default() };
@@ -3231,19 +3870,23 @@ impl SelfTest {
         let system = scene.page() == Some(PageKind::System);
         let health = scene.page() == Some(PageKind::Health) || scene == Scene::HealthNotice;
         let stocks = scene.page() == Some(PageKind::Stocks);
-        // Notifications (Windows, off by default): on for its page and its notices.
-        let notify = scene.page() == Some(PageKind::Notifications) || matches!(scene, Scene::MessageNotice | Scene::MessageHidden);
+        // Notifications (on by default, but only in the Store copy: the self-test
+        // runs the download): as the Store copy for its page, its notices and
+        // the Settings scene with its chip.
+        st.notify_can = scene.page() == Some(PageKind::Notifications) || matches!(scene, Scene::MessageNotice | Scene::MessageHidden | Scene::SettingsTabsStore);
         let ielts = scene.page() == Some(PageKind::Ielts);
         // Meeting notes: on for its page and its pill.
         let notes = scene.page() == Some(PageKind::Notes) || scene == Scene::NotesActivity;
-        for (id, on) in [(SYSTEM.id, system), (HEALTH.id, health), (STOCKS.id, stocks), (NOTIFICATIONS.id, notify), (IELTS.id, ielts), (MEETING_NOTES.id, notes)] {
+        let caffeine = scene.page() == Some(PageKind::Caffeine);
+        for (id, on) in [(SYSTEM.id, system), (HEALTH.id, health), (STOCKS.id, stocks), (IELTS.id, ielts), (MEETING_NOTES.id, notes), (CAFFEINE.id, caffeine)] {
             st.settings.set_addon(id, on);
             st.addons.insert(id, if on { AddonStatus::Ready } else { AddonStatus::Off });
         }
         seed_stocks(st, scene, now);
+        seed_caffeine(st, scene);
         // The Downloader: offered in its own scenes, and on there (its tools
         // in place, so the tab shows) except on the Add-ons page, whose row
-        // shows it off; signed out (`AddonsPro`) it isn't listed at all.
+        // shows it off; signed out (`AddonsPro`) its row says what it is.
         // Its setting stays as it is, as for Prayer times above.
         st.downloader_offered = scene.downloader();
         let tab = scene.downloader() && scene != Scene::AddonsDownloader;
@@ -3252,6 +3895,7 @@ impl SelfTest {
         seed_notifications(st, scene);
         seed_ielts(st, scene, now);
         seed_notes(st, scene, now);
+        st.ui.addon_about = (scene == Scene::AddonsAbout).then_some(poni_core::addons::AI_USAGE.id);
         if scene.pro() {
             st.oyenza.link = OyenzaLink::Connected { account: "a•••@example.com".into() };
             st.oyenza.pro = Some(true);
@@ -3298,6 +3942,188 @@ impl SelfTest {
         app.selftest_window_under(scene.window_under());
         app.selftest_hover(None);
         app.selftest_set_expanded(scene.expanded());
+    }
+
+    /// Put the app into the Diorama picture `r`: the resting pill with
+    /// nothing else on, the PC's clock held at the picture's time.
+    /// Idempotent, like [`Self::apply`], which also rests the glass ball.
+    fn apply_rest(&self, app: &mut App, r: &Rest) {
+        self.apply(app, Scene::IdleClock);
+        clock::hold_local(Some(r.time()));
+        // The island's look follows the picture's own sun.
+        crate::pill::hold_night(None);
+        let st = &mut app.st;
+        st.settings.use_24h = !r.h12;
+        if r.minimal {
+            st.settings.idle_style = IdleStyle::Minimal;
+        }
+        st.power = r.power();
+        if r.hover {
+            let on_it = app.island_body().center();
+            app.selftest_hover(Some(on_it));
+        }
+    }
+
+    /// [`Self::apply`] or [`Self::apply_rest`], for what `shot` shows.
+    fn show(&self, app: &mut App, shot: Shot) {
+        match shot {
+            Shot::Scene(i) => self.apply(app, SCENES[i]),
+            Shot::Rest(k) => self.apply_rest(app, &RESTS[k]),
+        }
+    }
+
+    /// The sun sets in the picture `diorama-roll`, taken a minute before:
+    /// on a held clock the minute turns 18:00 and the glass ball sets off
+    /// for the tree, is halfway after half its [`ROLL_S`], and rests there
+    /// once they are over. The ball asks for frames while it rolls and for
+    /// none once it has arrived, and each frame is `studio_diorama`'s
+    /// picture of that point of the roll. Returns the frame of the ball
+    /// halfway, which is the picture kept. Waits the roll out (about 1.5 s)
+    /// so the app's clock never runs ahead of the real one.
+    fn sunset(&self, app: &mut App, r: &Rest, before: &Sight, scale: f32, checks: &mut Vec<Check>) -> Option<(i32, i32, Vec<u8>)> {
+        let wait = |s: f64| std::thread::sleep(std::time::Duration::from_secs_f64(s));
+        let (hour, minute) = ((HOUSE_DAY.1 / 60.0) as u8, (HOUSE_DAY.1 % 60.0) as u8);
+        let at = |lens: f32| Moment { minute: HOUSE_DAY.1, lens, clock: before.moment.clock.map(|c| Clock { hour, minute, ..c }), ..before.moment };
+        let (rest, shown) = before.sizes();
+        // One frame of the roll: whether it asked for another, and how much
+        // of it is the picture with the ball `lens` of the way across.
+        let look = |app: &mut App, lens: f32| {
+            let (w, h, px, _) = app.selftest_capture();
+            let wants = app.selftest_frames_wanted();
+            let origin = app.selftest_capture_rect();
+            let seen = picture_match(&Frame { w, h, px: &px }, app.island_body(), (origin.left, origin.top), scale, &at(lens), rest, shown);
+            (wants, seen, (w, h, px))
+        };
+        clock::hold(Some(clock::mono()));
+        clock::hold_local(Some(LocalDateTime { hour, minute, ..r.time() }));
+        let (sets_off, _, _) = look(app, 0.0);
+        let t0 = app.st.now;
+        wait(ROLL_S / 2.0);
+        clock::hold(Some(t0 + ROLL_S / 2.0));
+        let (rolling, halfway, mid) = look(app, 0.5);
+        wait(ROLL_S / 2.0 + 0.05);
+        clock::hold(Some(t0 + ROLL_S + 0.05));
+        let (still_wants, arrived, _) = look(app, 1.0);
+        clock::hold(None);
+        let said = |on: bool| if on { "asked for frames" } else { "asked for none" };
+        checks.push(check(
+            "diorama-roll",
+            sets_off && rolling && picture_ok(halfway),
+            format!(
+                "at {hour:02}:{minute:02} the ball set off and {}; halfway it {}, and {} of {} pixels inside the pill are studio_diorama's picture of the ball halfway across (largest difference in a channel: {})",
+                said(sets_off),
+                said(rolling),
+                halfway.0,
+                halfway.1,
+                halfway.2
+            ),
+        ));
+        checks.push(check(
+            "diorama-roll-ends",
+            !still_wants && picture_ok(arrived),
+            format!(
+                "{:.2} s after it set off the ball {}, and {} of {} pixels inside the pill are studio_diorama's picture of the ball on the tree (largest difference in a channel: {})",
+                ROLL_S + 0.05,
+                said(still_wants),
+                arrived.0,
+                arrived.1,
+                arrived.2
+            ),
+        ));
+        Some(mid).filter(|(w, h, px)| *w > 0 && *h > 0 && px.len() == (*w as usize) * (*h as usize) * 4)
+    }
+
+    /// The glass ball slid by hand in the picture `diorama-slide`: pressed on
+    /// the house end and carried halfway, it shows the sunset it passes
+    /// (`Moment::slid`) and asks for no frames while the pointer rests. Let
+    /// go there, it rolls on to the tree and the theme keeps the night 45
+    /// minutes after sunset, the clock in the sky still the morning's;
+    /// tapped, it rolls back to the house and the morning. Each is
+    /// `studio_diorama`'s picture. Returns the frame of the ball halfway,
+    /// the picture kept. Waits its rolls out (about 1.6 s), as `sunset` does.
+    fn slide(&self, app: &mut App, before: &Sight, scale: f32, checks: &mut Vec<Check>) -> Option<(i32, i32, Vec<u8>)> {
+        let wait = |s: f64| std::thread::sleep(std::time::Duration::from_secs_f64(s));
+        let (rest, shown) = before.sizes();
+        let look = |app: &mut App, m: &Moment| {
+            let (w, h, px, _) = app.selftest_capture();
+            let wants = app.selftest_frames_wanted();
+            let origin = app.selftest_capture_rect();
+            let seen = picture_match(&Frame { w, h, px: &px }, app.island_body(), (origin.left, origin.top), scale, m, rest, shown);
+            (wants, seen, (w, h, px))
+        };
+        let said = |on: bool| if on { "asked for frames" } else { "asked for none" };
+        let body = app.island_body();
+        // The ball rests on the house, the pane's left end; it goes the
+        // pane's width less its own to the tree.
+        let (y, travel) = (body.center().y, rest.0 - rest.1);
+        let on_house = Point::new(body.x + (body.w - rest.0) / 2.0 + rest.1 / 2.0, y);
+        let halfway = Point::new(on_house.x + travel / 2.0, y);
+        let on_tree = Point::new(on_house.x + travel, y);
+        let t0 = clock::mono();
+        clock::hold(Some(t0));
+        app.selftest_button_down(on_house);
+        app.selftest_move(halfway);
+        let in_hand = crate::pill::diorama::held();
+        let (held_wants, half, mid) = look(app, &before.moment.slid(0.5));
+        checks.push(check(
+            "diorama-slide",
+            in_hand && !held_wants && picture_ok(half),
+            format!(
+                "pressed on the house end and carried halfway, the ball is {}in hand and the frame {} while the pointer rests; {} of {} pixels inside the pill are studio_diorama's picture of the sunset it passes (largest difference in a channel: {})",
+                if in_hand { "" } else { "not " },
+                said(held_wants),
+                half.0,
+                half.1,
+                half.2
+            ),
+        ));
+        // Let go halfway: on to the tree, the nearer end.
+        app.selftest_button_up(halfway);
+        let (rolls_on, _, _) = look(app, &before.moment.slid(0.5));
+        wait(0.45);
+        clock::hold(Some(t0 + 0.45));
+        let night = Moment { dark: None, ..before.moment.slid(1.0) };
+        let (night_wants, at_night, _) = look(app, &night);
+        let theme_night = crate::pill::diorama::night(&app.st) && crate::pill::diorama::left_by_hand(&app.st) == Some(true);
+        checks.push(check(
+            "diorama-slid",
+            rolls_on && !night_wants && theme_night && picture_ok(at_night),
+            format!(
+                "let go halfway, the ball {} and 0.45 s on {}; the theme shows its {}, and {} of {} pixels inside the pill are studio_diorama's picture of the night 45 minutes after sunset with the clock at {:02}:{:02} (largest difference in a channel: {})",
+                said(rolls_on),
+                said(night_wants),
+                if theme_night { "night" } else { "day" },
+                at_night.0,
+                at_night.1,
+                app.st.local.hour,
+                app.st.local.minute,
+                at_night.2
+            ),
+        ));
+        // A tap on it at the tree: back to the house, and the morning (and
+        // the island stays closed).
+        let opened = app.selftest_press(on_tree);
+        let (flips, _, _) = look(app, &before.moment);
+        wait(1.15);
+        clock::hold(Some(t0 + 1.6));
+        let (back_wants, back, _) = look(app, &before.moment);
+        let back_night = crate::pill::diorama::night(&app.st);
+        clock::hold(None);
+        checks.push(check(
+            "diorama-tap",
+            !opened && flips && !back_wants && !back_night && picture_ok(back),
+            format!(
+                "tapped at the tree, the island {} and the ball {}; 1.15 s on it {}; the theme shows its {}, and {} of {} pixels inside the pill are studio_diorama's picture of the morning (largest difference in a channel: {})",
+                if opened { "opened" } else { "stayed closed" },
+                said(flips),
+                said(back_wants),
+                if back_night { "night" } else { "day" },
+                back.0,
+                back.1,
+                back.2
+            ),
+        ));
+        Some(mid).filter(|(w, h, px)| *w > 0 && *h > 0 && px.len() == (*w as usize) * (*h as usize) * 4)
     }
 
     fn media_session(&self, timeline: Timeline) -> MediaSession {
@@ -3376,24 +4202,32 @@ impl SelfTest {
         }
     }
 
-    fn capture(&mut self, app: &mut App, i: usize, settled: bool, waited: f64) {
-        let scene = SCENES[i];
-        let name = format!("{:02}-{}", i + 1, scene.name());
+    fn capture(&mut self, app: &mut App, shot: Shot, settled: bool, waited: f64) {
+        // One of the Diorama theme's pictures is the clock scene at its own
+        // time. Scenes are numbered; those pictures come after them, by name.
+        let (scene, rest, index) = match shot {
+            Shot::Scene(i) => (SCENES[i], None, i + 1),
+            Shot::Rest(k) => (Scene::IdleClock, Some(&RESTS[k]), self.shots() - RESTS.len() + k + 1),
+        };
+        let label = rest.map_or_else(|| scene.name(), |r| format!("diorama-{}", r.name));
+        let name = if rest.is_some() { label.clone() } else { format!("{index:02}-{label}") };
         let (budget, tries) = self.frame_budget(app);
         self.budget_ms = budget;
         let mut samples = Vec::with_capacity(tries);
-        let mut shot = (0, 0, Vec::new(), (0, 0));
+        let mut taken = (0, 0, Vec::new(), (0, 0));
         for _ in 0..tries {
-            self.apply(app, scene);
+            self.show(app, shot);
             let t = Instant::now();
-            shot = app.selftest_capture();
+            taken = app.selftest_capture();
             let ms = t.elapsed().as_secs_f64() * 1000.0;
             samples.push(round2(ms));
             if ms < budget {
                 break;
             }
         }
-        let (w, h, px, present) = shot;
+        // Whether that frame asked for another one (see `diorama-rests`).
+        let wants_frames = app.selftest_frames_wanted();
+        let (w, h, mut px, present) = taken;
         let scale = app.scale();
         let body = app.island_body_in_capture();
         let frame = Frame { w, h, px: &px };
@@ -3420,6 +4254,9 @@ impl SelfTest {
             // 3 DIPs inside the body's top edge: the window's top rows where
             // the island hangs from the edge, below the gap where it floats.
             let pill = crate::pill::on(self.theme);
+            // The Diorama theme's resting pill is its picture (for the clock,
+            // the Minimal look and, the status bar being Pill's own, Status).
+            let picture = self.theme == Theme::Diorama && app.selftest_mode().0 == Mode::Idle && crate::pill::diorama::shows(&app.st);
             let edge = if pill { body.y } else { 0.0 };
             let top = ((edge + 3.0) * scale).round() as i32;
             let [b, g, r, a] = frame.at(cx, top);
@@ -3429,8 +4266,33 @@ impl SelfTest {
                 let copy = app.selftest_glass_state().1;
                 let min = if copy { 254 } else { (poni_core::glass::SMOKED_OPACITY * 255.0) as u8 - 3 };
                 checks.push(check("glass-opaque", a >= min, format!("pixel ({cx}, {top}) = rgba({r}, {g}, {b}, {a}), want alpha >= {min}")));
+            } else if picture {
+                // A picture covers the island's ground: opaque is the rule
+                // here, and `diorama_checks` look at what it shows.
+                checks.push(check("diorama-opaque", a >= 254, format!("pixel ({cx}, {top}) = rgba({r}, {g}, {b}, {a}), 3 DIPs inside the picture")));
+            } else if let Some(f) = crate::pill::look(&app.st, false).frame {
+                // Diorama: the body is a frame round a pane. Halfway through
+                // the frame at the top it is the frame's (cream by day,
+                // indigo at night); just past it at the left end, halfway
+                // down (no page draws there, and the frame's shadow on the
+                // pane is along its top), the look's ground.
+                let fw = crate::pill::shape::frame_width(body.w, body.h);
+                let rim = frame.at(cx, ((body.y + fw / 2.0) * scale).floor() as i32);
+                let night = !crate::pill::look(&app.st, false).light;
+                let said = format!("rgb({}, {}, {})", rim[2], rim[1], rim[0]);
+                let ok = if night { indigo_frame(rim) } else { cream_frame(rim) };
+                checks.push(check("diorama-body-frame", ok, format!("{fw:.1} DIP frame, {said} halfway through it at the top; want the frame's {} (face rgb{:?})", if night { "indigo" } else { "cream" }, rgb8(f.face))));
+                let ground = rgb8(crate::pill::look(&app.st, false).ground);
+                let (px, py) = (((body.x + fw + 1.5) * scale).floor() as i32, ((body.y + body.h / 2.0) * scale).floor() as i32);
+                let [b, g, r, a] = frame.at(px, py);
+                let off = [r, g, b].iter().zip(ground).map(|(&p, q)| p.abs_diff(q)).max().unwrap_or(0);
+                checks.push(check(
+                    "body-opaque-ground",
+                    a >= 254 && off <= 6,
+                    format!("pixel ({px}, {py}) = rgba({r}, {g}, {b}, {a}), ground rgb{ground:?}, 1.5 DIPs inside the frame at the left end"),
+                ));
             } else {
-                let ground = rgb8(poni_core::look::of(self.theme).ground);
+                let ground = rgb8(crate::pill::look(&app.st, false).ground);
                 let off = [r, g, b].iter().zip(ground).map(|(&p, q)| p.abs_diff(q)).max().unwrap_or(0);
                 let inside = if pill { ", 3 DIPs inside the floating body" } else { "" };
                 checks.push(check(
@@ -3460,16 +4322,58 @@ impl SelfTest {
                 ));
             }
 
-            let look = if self.glass.is_some() { app.selftest_glass_state().2 } else { poni_core::look::of(self.theme) };
+            let look = if self.glass.is_some() { app.selftest_glass_state().2 } else { crate::pill::look(&app.st, false) };
             // Glass: away from the bright rim, which isn't content.
             let area = if self.glass.is_some() { Rect::new(body.x + 10.0, body.y, (body.w - 20.0).max(1.0), (body.h - 10.0).max(1.0)) } else { body };
             let lit = frame.content_pixels(area, scale, rgb8(look.ground));
             checks.push(check("content-drawn", lit >= 20, format!("{lit} content pixels inside the island")));
-            if let Some(run) = self.glass {
+            // Not where the island moved: the backdrop is a page laid out
+            // for the island in the middle.
+            if let Some(run) = self.glass.filter(|_| !scene.moved()) {
                 self.glass_checks(app, scene, run, &px, w, h, body, scale, &mut checks);
             }
             if pill {
-                pill_checks(&frame, body, scale, &mut checks);
+                // Diorama's night island casts the window's warm glow.
+                let shadow = look.frame.map_or([0, 0, 0], |f| rgb8(f.shadow));
+                pill_checks(&frame, body, scale, shadow, &mut checks);
+            }
+            // In the Diorama theme the clock rests as the picture, and so does
+            // the status bar's look (the bar itself is the Pill theme's own).
+            if self.theme == Theme::Diorama && (rest.is_some() || matches!(scene, Scene::IdleClock | Scene::IdleStatus)) {
+                let (mode, _) = app.selftest_mode();
+                let said = if picture { "the resting pill is the picture" } else { "the resting pill is not the picture" };
+                checks.push(check("diorama-shows", picture, format!("{mode:?} with the {:?} look: {said}", app.st.settings.idle_style)));
+            }
+            if let Some(r) = rest {
+                // The PC's clock is the picture's, held: the hour it shows
+                // doesn't depend on when the run is.
+                let (l, t) = (app.st.local, r.time());
+                let held = (l.year, l.month, l.day, l.hour, l.minute) == (t.year, t.month, t.day, t.hour, t.minute);
+                checks.push(check("diorama-time", held, format!("the app's clock reads {} {:02}:{:02}, the picture is of {} {:02}:{:02}", l.day_key(), l.hour, l.minute, t.day_key(), t.hour, t.minute)));
+            }
+            if picture {
+                let sight = Sight::of(&app.st, rest);
+                let origin = app.selftest_capture_rect();
+                diorama_checks(&frame, app.island_body(), (origin.left, origin.top), scale, &sight, crate::pill::diorama::geom(&app.st), &mut checks);
+                // Nothing runs at rest: once painted, the picture waits for
+                // the minute tick. Only the rolling ball asks for frames.
+                checks.push(check(
+                    "diorama-rests",
+                    !wants_frames,
+                    if wants_frames { "the frame asked for another one: something keeps the resting pill drawing" } else { "the frame asked for no other: the frame clock is parked" },
+                ));
+                if let Some(r) = rest.filter(|r| r.roll) {
+                    // Kept as the picture: the ball halfway to the tree.
+                    if let Some((_, _, mid)) = self.sunset(app, r, &sight, scale, &mut checks).filter(|(mw, mh, _)| (*mw, *mh) == (w, h)) {
+                        px = mid;
+                    }
+                }
+                if rest.is_some_and(|r| r.slide) {
+                    // Kept as the picture: the ball held halfway, at the sunset.
+                    if let Some((_, _, mid)) = self.slide(app, &sight, scale, &mut checks).filter(|(mw, mh, _)| (*mw, *mh) == (w, h)) {
+                        px = mid;
+                    }
+                }
             }
         }
         // Frame time counts on a real GPU only (see FRAME_BUDGET_MS).
@@ -3487,6 +4391,9 @@ impl SelfTest {
         }
         if scene == Scene::MediaLyric {
             checks.push(lyric_line_check(&app.st));
+        }
+        if scene.moved() {
+            checks.push(on_screen_check(app, scene));
         }
         if scene == Scene::PrayerOk {
             // After OK: the song and its sung line until Ashar, as before the countdown.
@@ -3542,10 +4449,8 @@ impl SelfTest {
 
         let ok = checks.iter().all(|c| c.ok);
         crate::pinfo!(
-            "selftest: [{:02}/{}] {}: {} (settle {:.0} ms, frame {best:.2} ms, {w}x{h} px)",
-            i + 1,
-            SCENES.len(),
-            scene.name(),
+            "selftest: [{index:02}/{}] {label}: {} (settle {:.0} ms, frame {best:.2} ms, {w}x{h} px)",
+            self.shots(),
             if ok { "ok" } else { "FAILED" },
             waited * 1000.0
         );
@@ -3554,7 +4459,7 @@ impl SelfTest {
         }
         if slow {
             crate::pwarn!("selftest:   slow frame on a software GPU, not counted: {timing}");
-            self.slow_frames.push(format!("{}: {timing}", scene.name()));
+            self.slow_frames.push(format!("{label}: {timing}"));
         }
 
         if w > 0 && h > 0 && px.len() == (w as usize) * (h as usize) * 4 {
@@ -3566,8 +4471,8 @@ impl SelfTest {
             self.queue_write(&name, w, h, px, scale, back);
         }
         self.states.push(StateReport {
-            index: i + 1,
-            name: scene.name(),
+            index,
+            name: label,
             expanded: scene.expanded(),
             page: scene.page().map(|p| p.key()),
             image: format!("{name}.png"),
@@ -3712,8 +4617,9 @@ impl SelfTest {
             let (ok, detail) = rx.recv_timeout(std::time::Duration::from_secs(60)).unwrap_or((false, "still downloading 60 s after the scenes".into()));
             self.checks.push(check("addon-download", ok, detail));
         }
-        if self.states.len() < SCENES.len() {
-            self.checks.push(check("states-visited", false, format!("{} of {} states captured", self.states.len(), SCENES.len())));
+        let shots = self.shots();
+        if self.states.len() < shots {
+            self.checks.push(check("states-visited", false, format!("{} of {shots} states captured", self.states.len())));
         }
 
         let mut failed: Vec<String> = self.checks.iter().filter(|c| !c.ok).map(|c| c.name.clone()).collect();
@@ -3734,7 +4640,7 @@ impl SelfTest {
             renderer: self.renderer.to_string(),
             frame_budget_ms: self.budget_ms,
             states_passed: self.states.iter().filter(|s| s.ok).count(),
-            states_total: SCENES.len(),
+            states_total: shots,
             failed_checks: failed.clone(),
             slow_frames: std::mem::take(&mut self.slow_frames),
             checks: std::mem::take(&mut self.checks),
@@ -3766,7 +4672,8 @@ impl SelfTest {
             let name = e.file_name().to_string_lossy().into_owned();
             let b = name.as_bytes();
             let ours = name == "report.json"
-                || (name.ends_with(".png") && b.len() > 3 && b[0].is_ascii_digit() && b[1].is_ascii_digit() && b[2] == b'-');
+                || (name.ends_with(".png") && b.len() > 3 && b[0].is_ascii_digit() && b[1].is_ascii_digit() && b[2] == b'-')
+                || (name.ends_with(".png") && name.starts_with("diorama-"));
             if ours && e.path().is_file() {
                 if let Err(err) = fs::remove_file(e.path()) {
                     crate::pwarn!("selftest: could not remove old {name}: {err}");
@@ -3962,6 +4869,21 @@ impl Frame<'_> {
         r - l + 1
     }
 
+    /// Height of the run of mostly-opaque pixels through (`x`, `y`).
+    fn opaque_rise(&self, x: i32, y: i32) -> i32 {
+        if self.at(x, y)[3] < 128 {
+            return 0;
+        }
+        let (mut t, mut b) = (y, y);
+        while t > 0 && self.at(x, t - 1)[3] >= 128 {
+            t -= 1;
+        }
+        while b + 1 < self.h && self.at(x, b + 1)[3] >= 128 {
+            b += 1;
+        }
+        b - t + 1
+    }
+
     /// Opaque, bright pixels inside the island body (text, icons, art).
     /// Opaque pixels inside the island that stand clearly apart from its
     /// ground colour (text, icons, art).
@@ -4002,8 +4924,9 @@ impl Frame<'_> {
         n
     }
 
-    /// What rows `0..rows` hold (see [`GapScan`]).
-    fn gap_scan(&self, rows: i32) -> GapScan {
+    /// What rows `0..rows` hold (see [`GapScan`]), the island's shadow
+    /// being `shadow` (rgb).
+    fn gap_scan(&self, rows: i32, shadow: [u8; 3]) -> GapScan {
         let mut g = GapScan { most: 0, edge: 0, coloured: 0, hit: 0 };
         for y in 0..rows.min(self.h) {
             for x in 0..self.w {
@@ -4012,8 +4935,10 @@ impl Frame<'_> {
                 if y == 0 {
                     g.edge = g.edge.max(a);
                 }
-                // Premultiplied: black at any alpha stays (0, 0, 0); 2 allows rounding.
-                g.coloured += usize::from(r.max(gr).max(b) > 2);
+                // Premultiplied: the shadow's colour at any alpha stays that
+                // colour times the alpha (black: (0, 0, 0)); 2 allows rounding.
+                let want = shadow.map(|c| ((c as u32 * a as u32 + 127) / 255) as u8);
+                g.coloured += usize::from([r, gr, b].iter().zip(want).any(|(&p, q)| p.abs_diff(q) > 2));
                 g.hit += usize::from(a == 1);
             }
         }
@@ -4108,10 +5033,10 @@ const PILL_GAP_EDGE_MAX: u8 = 8;
 /// window keeps beside and below the body: a shadow that reaches the window's
 /// side or bottom edge is cut off there, a hard line on a light wallpaper.
 /// (The top edge is the screen's, and the gap check reads it.)
-fn pill_checks(frame: &Frame, body: Rect, scale: f32, checks: &mut Vec<Check>) {
+fn pill_checks(frame: &Frame, body: Rect, scale: f32, shadow: [u8; 3], checks: &mut Vec<Check>) {
     // Rows wholly above the body.
     let gap = (body.y * scale).floor() as i32;
-    let g = frame.gap_scan(gap);
+    let g = frame.gap_scan(gap, shadow);
     let cx = ((body.x + body.w / 2.0) * scale).floor() as i32;
     let first = (0..frame.h).find(|&y| frame.at(cx, y)[3] >= 128);
     let want = body.y * scale;
@@ -4121,7 +5046,7 @@ fn pill_checks(frame: &Frame, body: Rect, scale: f32, checks: &mut Vec<Check>) {
         gap > 0 && g.most <= PILL_GAP_SHADOW_MAX && g.edge <= PILL_GAP_EDGE_MAX && g.coloured == 0 && starts,
         format!(
             "rows 0-{} above the body: max alpha {} (want <= {PILL_GAP_SHADOW_MAX}), {} on the screen's edge (want <= {PILL_GAP_EDGE_MAX}), \
-             {} coloured pixels (want 0: shadow and hit pixels are black), {} hit pixels at alpha 1; the body starts at row {} (geometry {want:.1})",
+             {} coloured pixels (want 0: hit pixels are black and the shadow rgb{shadow:?}), {} hit pixels at alpha 1; the body starts at row {} (geometry {want:.1})",
             gap - 1,
             g.most,
             g.edge,
@@ -4450,4 +5375,228 @@ fn backdrop_dip(dark: bool, x: f32, y: f32) -> [u8; 3] {
         c = mix8([34, 70, 46], [58, 96, 60], n);
     }
     c
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use poni_core::settings::Settings;
+    use poni_core::store::Store;
+
+    /// The app's state in the Diorama picture `r`, as `apply_rest` leaves it.
+    fn state(r: &Rest) -> AppState {
+        let mut st = AppState::new(Settings { theme: Theme::Diorama, ..Settings::default() }, Store::default());
+        st.local = r.time();
+        st.settings.use_24h = !r.h12;
+        st.settings.idle_style = if r.minimal { IdleStyle::Minimal } else { IdleStyle::Clock };
+        st.power = r.power();
+        st
+    }
+
+    /// A captured frame of the pill as the app draws it: `studio_diorama`'s
+    /// picture of `m`, `shown` DIPs large around a pane of `rest`, cut to a
+    /// capsule with ends of `radius`, floating below the top of a window
+    /// with its middle `cx` DIPs in (`Island::body_rect_at`). The frame
+    /// starts at the window's pixel `origin` and keeps 20 DIPs to the right
+    /// of the pill and below it. Returns the frame's size and pixels, and
+    /// the body in the window.
+    fn drawn_at(m: &Moment, rest: (f32, f32), shown: (f32, f32), radius: f32, scale: f32, cx: f32, origin: (i32, i32)) -> (i32, i32, Vec<u8>, Rect) {
+        // Under the pointer the pill reaches 2 DIPs up into its 8 DIP gap.
+        let body = Rect::new(cx - shown.0 / 2.0, if shown.1 > rest.1 { 6.0 } else { 8.0 }, shown.0, shown.1);
+        let at = crate::pill::shape::snap(body, scale);
+        let p = studio_diorama::render(m, &View { w: at.w, h: at.h, rest_w: rest.0, rest_h: rest.1, scale });
+        let (w, h) = (((body.right() + 20.0) * scale).ceil() as i32 - origin.0, ((body.bottom() + 20.0) * scale).ceil() as i32 - origin.1);
+        let (x0, y0) = ((at.x * scale).round() as i32 - origin.0, (at.y * scale).round() as i32 - origin.1);
+        let mut px = vec![0u8; (w * h * 4) as usize];
+        for j in 0..p.h as i32 {
+            for i in 0..p.w as i32 {
+                let (x, y) = ((i as f32 + 0.5) / scale, (j as f32 + 0.5) / scale);
+                let (ax, ay) = (x.clamp(radius, at.w - radius), y.clamp(radius, at.h - radius));
+                if (x - ax).hypot(y - ay) <= radius {
+                    let (to, from) = ((((y0 + j) * w + x0 + i) * 4) as usize, ((j as u32 * p.w + i as u32) * 4) as usize);
+                    px[to..to + 4].copy_from_slice(&p.bgra[from..from + 4]);
+                }
+            }
+        }
+        (w, h, px, body)
+    }
+
+    /// [`drawn_at`] with the frame at the window's corner, 20 DIPs left of the pill.
+    fn drawn(m: &Moment, rest: (f32, f32), shown: (f32, f32), radius: f32, scale: f32) -> (i32, i32, Vec<u8>, Rect) {
+        drawn_at(m, rest, shown, radius, scale, 20.0 + shown.0 / 2.0, (0, 0))
+    }
+
+    /// The Diorama checks that fail for the picture `r` when the frame is
+    /// `change`d from what the app draws: `change` is given the moment, the
+    /// size and the radius to draw (and no pixels yet), then the pixels.
+    fn failing(r: &Rest, scale: f32, change: impl Fn(&mut Moment, &mut (f32, f32), &mut f32, &mut Vec<u8>)) -> Vec<String> {
+        let st = state(r);
+        let sight = Sight::of(&st, Some(r));
+        let (rest, mut shown) = sight.sizes();
+        let (mut m, mut radius) = (sight.moment, shown.1 / 2.0);
+        let mut none = Vec::new();
+        change(&mut m, &mut shown, &mut radius, &mut none);
+        let (w, h, mut px, body) = drawn(&m, rest, shown, radius, scale);
+        change(&mut m, &mut shown, &mut radius, &mut px);
+        let mut checks = Vec::new();
+        diorama_checks(&Frame { w, h, px: &px }, body, (0, 0), scale, &sight, crate::pill::diorama::geom(&st), &mut checks);
+        // Every picture is measured, looked at against the crate's, and has
+        // its frame's colour judged (the rolling ball's is the picture after).
+        for name in ["diorama-size", "diorama-capsule", "diorama-frame", "diorama-picture"] {
+            assert!(checks.iter().any(|c| c.name == name), "{}: no {name} check", r.name);
+        }
+        checks.into_iter().filter(|c| !c.ok).map(|c| format!("{}: {}", c.name, c.detail)).collect()
+    }
+
+    fn rest(name: &str) -> &'static Rest {
+        RESTS.iter().find(|r| r.name == name).expect("a Diorama picture of that name")
+    }
+
+    #[test]
+    fn the_diorama_pictures_are_the_hours_the_widths_the_pointer_and_the_roll() {
+        let at = |name: &str| (rest(name).hour, rest(name).minute);
+        assert_eq!(
+            [at("dawn"), at("morning"), at("noon"), at("golden-hour"), at("dusk"), at("night"), at("small-hours"), at("12-hour")],
+            [(6, 10), (10, 8), (12, 30), (17, 40), (18, 20), (21, 30), (2, 30), (17, 5)]
+        );
+        // Each is a file of its own: lower-case words with hyphens.
+        for (k, r) in RESTS.iter().enumerate() {
+            assert!(RESTS[..k].iter().all(|q| q.name != r.name), "{} twice", r.name);
+            assert!(!r.name.is_empty() && r.name.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'), "{}", r.name);
+        }
+        // The pill is as long as a notch whatever it shows: 190 by 38, with
+        // a 12-hour clock, a badge, both, or no clock.
+        let wide = |name: &str| Sight::of(&state(rest(name)), Some(rest(name))).sizes();
+        assert_eq!(wide("noon"), ((190.0, 38.0), (190.0, 38.0)));
+        for name in ["12-hour", "charging", "low-battery", "12-hour-charging", "minimal"] {
+            assert_eq!(wide(name).0, (190.0, 38.0), "{name}");
+        }
+        // Under the pointer: 6 more each way around the same pane.
+        assert_eq!(wide("hover"), ((190.0, 38.0), (196.0, 44.0)));
+        // The roll holds the app's clock, so it is the last, a minute before
+        // the house's sunset; the slide by hand, which holds it too, just
+        // before it.
+        let last = RESTS.last().expect("pictures");
+        assert!(last.roll && RESTS.iter().filter(|r| r.roll).count() == 1);
+        assert!(RESTS[RESTS.len() - 2].slide && RESTS.iter().filter(|r| r.slide).count() == 1);
+        assert_eq!(at("slide"), (10, 8));
+        assert_eq!((last.hour as f32 * 60.0 + last.minute as f32 + 1.0, DAY_ZERO), (HOUSE_DAY.1, days_from_civil(2000, 1, 1)));
+    }
+
+    #[test]
+    fn every_diorama_picture_passes_its_checks_as_the_crate_paints_it() {
+        for r in &RESTS {
+            for scale in [1.0, 1.25, 1.5, 2.0, 4.0] {
+                assert_eq!(failing(r, scale, |_, _, _, _| {}), Vec::<String>::new(), "{} at {scale}", r.name);
+            }
+        }
+        // The sky is judged where the hour leaves no doubt, the lift under the pointer.
+        let names = |name: &str| {
+            let (r, st) = (rest(name), state(rest(name)));
+            let sight = Sight::of(&st, Some(r));
+            let (pane, shown) = sight.sizes();
+            let (w, h, px, body) = drawn(&sight.moment, pane, shown, shown.1 / 2.0, 1.0);
+            let mut checks = Vec::new();
+            diorama_checks(&Frame { w, h, px: &px }, body, (0, 0), 1.0, &sight, crate::pill::diorama::geom(&st), &mut checks);
+            checks.into_iter().map(|c| c.name).collect::<Vec<_>>()
+        };
+        for (name, sky, lift) in [("noon", true, false), ("night", true, false), ("small-hours", true, false), ("dawn", false, false), ("golden-hour", false, false), ("dusk", false, false), ("hover", true, true)] {
+            let got = names(name);
+            assert_eq!((got.iter().any(|n| n == "diorama-sky"), got.iter().any(|n| n == "diorama-lift")), (sky, lift), "{name}: {got:?}");
+        }
+    }
+
+    #[test]
+    fn a_scene_at_rest_passes_the_diorama_checks_whenever_the_run_is() {
+        // The clock and status scenes rest at the PC's own time and date:
+        // every seventh minute of the day, through a month of moons, with
+        // both clocks. No badge: their battery is at 76 %, not charging.
+        let mut st = AppState::new(Settings { theme: Theme::Diorama, ..Settings::default() }, Store::default());
+        st.power = fake_power(false);
+        for (k, minute) in (0..1440u32).step_by(7).enumerate() {
+            let (year, month, day) = REST_DAY;
+            st.local = LocalDateTime { year, month, day, hour: (minute / 60) as u8, minute: (minute % 60) as u8, second: 0 }.add_days(k as i64 % 30);
+            st.settings.use_24h = k % 2 == 0;
+            st.settings.idle_style = if k % 5 == 0 { IdleStyle::Status } else { IdleStyle::Clock };
+            let sight = Sight::of(&st, None);
+            let (pane, shown) = sight.sizes();
+            assert_eq!(pane.0, 190.0);
+            let (w, h, px, body) = drawn(&sight.moment, pane, shown, shown.1 / 2.0, 1.0);
+            let mut checks = Vec::new();
+            diorama_checks(&Frame { w, h, px: &px }, body, (0, 0), 1.0, &sight, crate::pill::diorama::geom(&st), &mut checks);
+            let failed: Vec<String> = checks.into_iter().filter(|c| !c.ok).map(|c| format!("{}: {}", c.name, c.detail)).collect();
+            assert_eq!(failed, Vec::<String>::new(), "{:?}", st.local);
+        }
+    }
+
+    #[test]
+    fn the_diorama_checks_tell_what_is_wrong_with_a_picture() {
+        let named = |fails: &[String]| fails.iter().map(|f| f.split(':').next().unwrap_or("").to_string()).collect::<Vec<_>>();
+        for scale in [1.0, 2.0] {
+            // A black capsule: Pill's resting pill, where the picture should be.
+            let black = failing(rest("noon"), scale, |_, _, _, px| px.as_chunks_mut::<4>().0.iter_mut().filter(|p| p[3] == 255).for_each(|p| p[..3].fill(0)));
+            assert_eq!(named(&black), ["diorama-frame", "diorama-sky", "diorama-picture"], "{scale}: {black:?}");
+            // The ball on the wrong end, and the night with it.
+            let wrong_end = failing(rest("noon"), scale, |m, _, _, _| m.lens = 1.0);
+            assert_eq!(named(&wrong_end), ["diorama-frame", "diorama-sky", "diorama-picture"], "{scale}: {wrong_end:?}");
+            let wrong_end = failing(rest("night"), scale, |m, _, _, _| m.lens = 0.0);
+            assert_eq!(named(&wrong_end), ["diorama-frame", "diorama-sky", "diorama-picture"], "{scale}: {wrong_end:?}");
+            // Another hour of the same side of the day, and a clock that isn't the setting's.
+            let hour = failing(rest("morning"), scale, |m, _, _, _| m.clock = m.clock.map(|c| Clock { hour: 11, ..c }));
+            assert_eq!(named(&hour), ["diorama-picture"], "{scale}: {hour:?}");
+            let no_badge = failing(rest("charging"), scale, |m, _, _, _| m.badge = None);
+            assert_eq!(named(&no_badge), ["diorama-picture"], "{scale}: {no_badge:?}");
+            // Pill's own resting pill is 32 tall: a capsule still, of the wrong size.
+            let short = failing(rest("noon"), scale, |_, shown, radius, _| (shown.1, *radius) = (32.0, 16.0));
+            assert_eq!(named(&short), ["diorama-size", "diorama-picture"], "{scale}: {short:?}");
+            // The right size with corners of 12: no capsule.
+            let boxy = failing(rest("noon"), scale, |_, _, radius, _| *radius = 12.0);
+            assert_eq!(named(&boxy), ["diorama-capsule"], "{scale}: {boxy:?}");
+            // Under the pointer, a pill that didn't swell.
+            let flat = failing(rest("hover"), scale, |_, shown, radius, _| (*shown, *radius) = ((190.0, 38.0), 19.0));
+            assert_eq!(named(&flat), ["diorama-size", "diorama-lift", "diorama-picture"], "{scale}: {flat:?}");
+        }
+    }
+
+    #[test]
+    fn a_pill_on_half_a_pixel_is_looked_for_where_the_window_puts_it() {
+        // At 125 % a 190 DIP pill is 237.5 pixels wide: in the middle of a
+        // window an even number of pixels wide its edges fall on half
+        // pixels, which the app rounds in the window's coordinates. The
+        // frame starts 150 pixels into the window.
+        let r = rest("noon");
+        let st = state(r);
+        let sight = Sight::of(&st, Some(r));
+        let (pane, shown) = sight.sizes();
+        let origin = (150, 0);
+        // The middle of a 692, a 1000 and a 693 pixel window, and one that is no pixel's edge.
+        for cx in [276.8, 400.0, 277.2, 300.3] {
+            let (w, h, px, body) = drawn_at(&sight.moment, pane, shown, shown.1 / 2.0, 1.25, cx, origin);
+            let mut checks = Vec::new();
+            diorama_checks(&Frame { w, h, px: &px }, body, origin, 1.25, &sight, crate::pill::diorama::geom(&st), &mut checks);
+            let failed: Vec<String> = checks.into_iter().filter(|c| !c.ok).map(|c| format!("{}: {}", c.name, c.detail)).collect();
+            assert_eq!(failed, Vec::<String>::new(), "the pill's middle {cx} DIPs in");
+            // A frame taken to start a pixel further left has the picture a pixel off.
+            let off = picture_match(&Frame { w, h, px: &px }, body, (origin.0 - 1, 0), 1.25, &sight.moment, pane, shown);
+            assert!(!picture_ok(off), "{cx}: {off:?}");
+        }
+    }
+
+    #[test]
+    fn a_frame_is_measured_through_its_opaque_pixels() {
+        // A 6 x 4 block of opaque pixels at (2, 1) in a 10 x 8 frame.
+        let (w, h) = (10, 8);
+        let mut px = vec![0u8; (w * h * 4) as usize];
+        for y in 1..5 {
+            for x in 2..8 {
+                px[((y * w + x) * 4 + 3) as usize] = 255;
+            }
+        }
+        let frame = Frame { w, h, px: &px };
+        assert_eq!((frame.opaque_run(4, 2), frame.opaque_rise(4, 2)), (6, 4));
+        assert_eq!((frame.opaque_run(0, 2), frame.opaque_rise(4, 6)), (0, 0));
+        // White is as light as it gets, and green lighter than blue.
+        assert_eq!(luma([255, 255, 255, 255]).round(), 255.0);
+        assert!(luma([0, 255, 0, 255]) > luma([255, 0, 0, 255]));
+    }
 }

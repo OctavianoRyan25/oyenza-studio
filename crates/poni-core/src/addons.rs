@@ -115,16 +115,18 @@ impl Addon {
 }
 
 /// Prayer times: the place list and the adzan (`addons/sholat/` in the repo).
+/// `addon-sholat-3` brought a clearer adzan; versions up to 0.2.24 still
+/// download `addon-sholat-1`, so never delete it.
 pub const PRAYER_TIMES: Addon = Addon {
     id: "sholat",
     title: "Prayer times",
     blurb: "Today's times for your city and a reminder in the island.",
     mac_blurb: None,
-    tag: "addon-sholat-1",
+    tag: "addon-sholat-3",
     files: &[
         AddonFile { name: "places.json", size: 79_687, sha256: "4d2e1cd6c277b97273f415cf0460579db143fe92ac88f6e4bddb79cdf8cbf69b", url: None },
-        AddonFile { name: "adzan.m4a", size: 1_822_513, sha256: "bd5a9db9d23eb2fb7e3368c33afeb08603b71b762549ba8247491c5aac24cb59", url: None },
-        AddonFile { name: "NOTICE.txt", size: 869, sha256: "a1762a46d2ff3c7456070f76fe370e02e169f30ee749fea7763568034401185a", url: None },
+        AddonFile { name: "adzan.m4a", size: 878_695, sha256: "6b8097fa7dfa43bd61ce65894396518ea65dd9d940e56b251ffc4ae5e78c7420", url: None },
+        AddonFile { name: "NOTICE.txt", size: 971, sha256: "166776256a3a8cb67e1ea42cd9b0f5ae17ddeca5bf7f35b72a0cd001a942ac2c", url: None },
     ],
     pro: false,
 };
@@ -214,17 +216,15 @@ pub const STOCKS: Addon = Addon {
     pro: false,
 };
 
-/// Notifications (Windows): other apps' notifications in the island, from
-/// the apps the person picks on its page (WhatsApp, Telegram and Phone Link
-/// to begin with), read through Windows' notification listener
-/// (`poni_core::notifications`). Its code is in the app, so there is nothing
-/// to download. Off, there is no Notifications tab and nothing listens.
-/// Windows lets only an app with a package identity read notifications, so
-/// it works in the Microsoft Store copy; the Mac has no way to read them.
-pub const NOTIFICATIONS: Addon = Addon {
-    id: "notifications",
-    title: "Notifications",
-    blurb: "Messages from WhatsApp, Telegram and your phone in the island.",
+/// Caffeine: the Caffeine page, drinks the person adds (an espresso drink by
+/// its shots and beans, the rest by serving), how much is still in them hour
+/// by hour, and a reminder before the day's last call (`poni_core::caffeine`).
+/// Its code is in the app, so there is nothing to download. Off, there is no
+/// Caffeine tab and no reminder.
+pub const CAFFEINE: Addon = Addon {
+    id: "caffeine",
+    title: "Caffeine",
+    blurb: "Add what you drink and see how much caffeine is still in you at bedtime, with a reminder before your last coffee.",
     mac_blurb: None,
     tag: "",
     files: &[],
@@ -321,13 +321,29 @@ pub fn is_downloader_tool(name: &str) -> bool {
     [YTDLP_EXE, QJS_EXE, FFMPEG_EXE].contains(&name)
 }
 
+/// AI usage: the AI tab (`studio_usage`), what's left of each AI plan on this
+/// computer and when it resets. A tab for everyone up to 0.2.25; part of
+/// Studio Pro in the versions after it. Its code is in the app, so there is
+/// nothing to download. Without Pro there is no AI tab or Settings section,
+/// and nothing is read. With Pro it's on until switched off
+/// ([`Settings::ai_usage_on`]).
+pub const AI_USAGE: Addon = Addon {
+    id: "ai",
+    title: "AI usage",
+    blurb: "Track your AI usage.",
+    mac_blurb: None,
+    tag: "",
+    files: &[],
+    pro: true,
+};
+
 /// IELTS: Oyen's IELTS Speaking coach, the IELTS page (`crate::ielts`):
 /// Oyen asks the questions out loud, listens to the answers through the
 /// microphone and gives a band score, through the Oyenza account. Its code
 /// is in the app, so there is nothing to download. Off, there is no IELTS
 /// tab, and nothing of it runs: no microphone, no player, no calls. Part of
-/// Studio Pro: the Add-ons page lists it only for an account the server says
-/// has Pro, and its tab goes once the server says an account hasn't.
+/// Studio Pro: it switches on only for an account the server says has Pro,
+/// and its tab goes once the server says an account hasn't.
 pub const IELTS: Addon = Addon {
     id: "ielts",
     title: "IELTS",
@@ -368,8 +384,7 @@ pub const REMINDERS: Addon = Addon {
 };
 
 /// Every add-on, in the order the Add-ons page lists them.
-pub const ALL: [&Addon; 12] =
-    [&PRAYER_TIMES, &JAPANESE_READINGS, &SCRIPT_READER, &SYSTEM, &HEALTH, &STOCKS, &NOTIFICATIONS, &IELTS, &MEETING_NOTES, &SCREEN_RECORDER, &DOWNLOADER, &REMINDERS];
+pub const ALL: [&Addon; 13] = [&PRAYER_TIMES, &JAPANESE_READINGS, &SCRIPT_READER, &SYSTEM, &HEALTH, &STOCKS, &CAFFEINE, &SCREEN_RECORDER, &AI_USAGE, &MEETING_NOTES, &IELTS, &DOWNLOADER, &REMINDERS];
 
 /// Whether Japanese readings switch themselves on for a song whose kanji went
 /// unread for want of them (`wants`): only while the person reads
@@ -478,14 +493,27 @@ mod tests {
     }
 
     #[test]
-    fn pro_is_ielts_meeting_notes_and_the_downloader() {
+    fn pro_is_ai_usage_meeting_notes_ielts_and_the_downloader() {
         let pro: Vec<&str> = ALL.iter().filter(|a| a.pro).map(|a| a.id).collect();
-        assert_eq!(pro, vec!["ielts", "notes", "downloader"]);
+        assert_eq!(pro, vec!["ai", "notes", "ielts", "downloader"]);
+    }
+
+    #[test]
+    fn ai_usage_comes_with_pro_until_switched_off() {
+        assert!(!AI_USAGE.downloads() && AI_USAGE.size() == 0);
+        assert_eq!(Status::Off.line(&AI_USAGE, false), "Track your AI usage.");
+        let mut s = Settings::default();
+        assert!(!s.ai_usage_on(false), "no Pro: no AI tab");
+        assert!(s.ai_usage_on(true), "Pro is the switch");
+        s.set_addon(AI_USAGE.id, false);
+        assert!(!s.ai_usage_on(true), "switched off by hand: stays off");
+        s.set_addon(AI_USAGE.id, true);
+        assert!(s.ai_usage_on(true) && !s.ai_usage_on(false));
     }
 
     #[test]
     fn built_in_add_ons_are_off_until_switched_on() {
-        for a in [&SYSTEM, &HEALTH, &STOCKS, &NOTIFICATIONS, &IELTS, &MEETING_NOTES,  &REMINDERS] {
+        for a in [&SYSTEM, &HEALTH, &STOCKS, &CAFFEINE, &IELTS, &MEETING_NOTES, &REMINDERS] {
             assert!(!a.downloads() && a.size() == 0, "{}", a.id);
             assert_eq!(Addon::find(a.id), Some(a));
             assert_eq!(Status::Ready.line(a, false), "On");
@@ -493,6 +521,9 @@ mod tests {
         }
         // Clipboard history left the app after 0.2.8: no add-on by that id.
         assert_eq!(Addon::find("clipboard"), None);
+        // Notifications left the add-ons after 0.2.24: it's on wherever Windows
+        // lets the copy read notifications, and Settings' tabs row switches it off.
+        assert_eq!(Addon::find("notifications"), None);
     }
 
     #[test]
@@ -564,8 +595,8 @@ mod tests {
     #[test]
     fn files_come_from_the_release() {
         let a = Addon::find("sholat").unwrap();
-        assert_eq!(a.url(&a.files[1]), "https://github.com/lucacadalora/oyenza-studio/releases/download/addon-sholat-1/adzan.m4a");
-        assert_eq!(a.size(), 1_903_069);
+        assert_eq!(a.url(&a.files[1]), "https://github.com/lucacadalora/oyenza-studio/releases/download/addon-sholat-3/adzan.m4a");
+        assert_eq!(a.size(), 959_353);
         assert!(Addon::find("nope").is_none());
     }
 
@@ -574,8 +605,8 @@ mod tests {
         let a = &PRAYER_TIMES;
         assert_eq!(Status::Off.line(a, false), a.blurb);
         assert_eq!(Status::Off.line(a, true), a.blurb, "no Mac line of its own: the same");
-        assert_eq!(Status::Downloading { done: 1_300_000, total: a.size() }.line(a, false), "Downloading · 1.3 MB of 1.9 MB");
-        assert_eq!(Status::Ready.line(a, false), "On · 1.9 MB on this PC");
+        assert_eq!(Status::Downloading { done: 500_000, total: a.size() }.line(a, false), "Downloading · 500 KB of 959 KB");
+        assert_eq!(Status::Ready.line(a, false), "On · 959 KB on this PC");
         assert!(!Status::Off.is_on() && Status::Waiting.is_on() && Status::Failed.is_on());
         assert_eq!(Status::Downloading { done: 1, total: 4 }.progress(), Some(0.25));
         assert_eq!(Status::Downloading { done: 0, total: 0 }.progress(), Some(0.0));
@@ -584,9 +615,9 @@ mod tests {
 
     #[test]
     fn add_ons_are_listed_in_order_each_with_its_own_id() {
-        // The Add-ons page's order: the Downloader last.
+        // The Add-ons page's order: the free ones, then Studio Pro's.
         let ids: Vec<&str> = ALL.iter().map(|a| a.id).collect();
-        assert_eq!(ids, ["sholat", "ja", "script", "system", "health", "stocks", "notifications", "ielts", "notes", "recorder", "downloader"]);
+        assert_eq!(ids, ["sholat", "ja", "script", "system", "health", "stocks", "caffeine", "recorder", "ai", "notes", "ielts", "downloader", "reminders"]);
         for (i, a) in ALL.iter().enumerate() {
             // The key in settings.json and the folder's name.
             assert!(!a.id.is_empty() && a.id.bytes().all(|b| b.is_ascii_lowercase()), "{}", a.id);

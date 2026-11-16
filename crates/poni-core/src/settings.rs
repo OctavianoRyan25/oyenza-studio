@@ -37,6 +37,12 @@ pub enum Theme {
     /// capsule, with its own layouts: the time and battery at rest, the song
     /// while music plays, a rounded card when it opens.
     Pill,
+    /// Diorama: the Pill theme's floating island, and at rest a small
+    /// window onto a pixel-art place that keeps the day's hours: a house, a
+    /// tree, the sun and the moon on their way across, and a glass ball
+    /// that rolls from the house to the tree when night falls
+    /// (`crates/studio-diorama`). Everything else is Pill's.
+    Diorama,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -48,7 +54,7 @@ pub enum MonitorChoice {
 }
 
 /// Bumped when defaults change in a way existing files should pick up.
-pub const SETTINGS_VERSION: u32 = 4;
+pub const SETTINGS_VERSION: u32 = 5;
 
 fn version_zero() -> u32 {
     0
@@ -79,6 +85,10 @@ pub struct Settings {
     /// top edge clear. The key stays so files from those versions still load.
     pub step_aside: bool,
     pub monitor: MonitorChoice,
+    /// Where the island sits along the top edge once dragged there: its
+    /// centre as a share of the monitor's width (0 the left edge, 1 the
+    /// right), kept on screen ([`crate::spot`]). None: the middle.
+    pub island_x: Option<f32>,
     pub show_media_activity: bool,
     pub lyrics: bool,
     /// Romanized "pronunciation" line under Japanese, Korean and Chinese lyrics.
@@ -94,8 +104,9 @@ pub struct Settings {
     /// Remember the last page instead of `start_page`.
     pub remember_page: bool,
     /// Tabs taken off the header's row in Settings, by page key: Music,
-    /// Today, Shelf, Tasks and Focus can go. Keys this version doesn't know
-    /// are kept, so a newer Studio's choices survive a save.
+    /// Today, Shelf, Tasks and Focus can go, and Notifications, which is off
+    /// while its key is here. Keys this version doesn't know are kept, so a
+    /// newer Studio's choices survive a save.
     pub hidden_tabs: Vec<String>,
     pub pomodoro: PomodoroConfig,
     /// Oyenza (once signed in): show sums and senders on the island straight
@@ -110,6 +121,8 @@ pub struct Settings {
     pub addons: BTreeMap<String, bool>,
     /// The Prayer times add-on's choices.
     pub prayer: PrayerSettings,
+    /// The Caffeine add-on's choices: bedtime, half-life, the limits, the reminder.
+    pub caffeine: crate::caffeine::Prefs,
     /// Show over games: while a full-screen app is in front, the island
     /// shows its frame rate, the GPU's load and temperature and the CPU's
     /// load. Turning it on also keeps the island on top of full-screen apps.
@@ -125,7 +138,7 @@ pub struct Settings {
     pub usage: UsageSettings,
     /// The Record page's choices (Oyenza Studio Recorder).
     pub record: RecordSettings,
-    /// The Notifications add-on's choices: which apps the island shows, and
+    /// Notifications' choices: which apps the island shows, and
     /// whether who it's from and the message show at once.
     pub notifications: crate::notifications::NotificationSettings,
     /// How Oyen talks on the IELTS page (Sopan, Gaul or Ngegas, the default).
@@ -189,6 +202,27 @@ pub enum PrayerSound {
     Silent,
 }
 
+/// Whose prayer times and Hijri dates the add-on follows.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PrayerFollow {
+    /// Kemenag RI: its times, and the government's Hijri calendar (MABIMS, isbat).
+    #[default]
+    Kemenag,
+    /// Muhammadiyah: Majelis Tarjih's times (Subuh at 18°) for Indonesian
+    /// places, and the Kalender Hijriah Global Tunggal (KHGT) everywhere.
+    Muhammadiyah,
+}
+
+impl PrayerFollow {
+    pub fn calendar(self) -> crate::hijri::Calendar {
+        match self {
+            PrayerFollow::Kemenag => crate::hijri::Calendar::Kemenag,
+            PrayerFollow::Muhammadiyah => crate::hijri::Calendar::Khgt,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PrayerSettings {
@@ -206,11 +240,21 @@ pub struct PrayerSettings {
     pub remind_before_min: u32,
     /// Pause music that is playing when the adzan starts (it stays paused).
     pub pause_music: bool,
+    /// Kemenag's times and calendar, or Muhammadiyah's.
+    pub follow: PrayerFollow,
 }
 
 impl Default for PrayerSettings {
     fn default() -> Self {
-        Self { place: None, world_place: None, follow_location: true, sound: PrayerSound::Tone, remind_before_min: 10, pause_music: true }
+        Self {
+            place: None,
+            world_place: None,
+            follow_location: true,
+            sound: PrayerSound::Tone,
+            remind_before_min: 10,
+            pause_music: true,
+            follow: PrayerFollow::Kemenag,
+        }
     }
 }
 
@@ -227,6 +271,7 @@ impl Default for Settings {
             hide_in_fullscreen: true,
             step_aside: false,
             monitor: MonitorChoice::Primary,
+            island_x: None,
             show_media_activity: true,
             lyrics: true,
             lyrics_pronunciation: true,
@@ -243,6 +288,7 @@ impl Default for Settings {
             system_history: true,
             addons: BTreeMap::new(),
             prayer: PrayerSettings::default(),
+            caffeine: crate::caffeine::Prefs::default(),
             game_stats: false,
             game_peek: false,
             usage: UsageSettings::default(),
@@ -302,6 +348,12 @@ impl Settings {
         installed && self.addons.get(crate::addons::SCREEN_RECORDER.id).copied().unwrap_or(true)
     }
 
+    /// AI usage is on for an account with Studio Pro (`pro`): the AI tab shows
+    /// and its readers may run. It comes on with Pro, until switched off.
+    pub fn ai_usage_on(&self, pro: bool) -> bool {
+        pro && self.addons.get(crate::addons::AI_USAGE.id).copied().unwrap_or(true)
+    }
+
     /// Clamp values a user may have hand-edited into nonsense.
     pub fn sanitized(mut self) -> Self {
         // Only untouched old defaults move.
@@ -321,6 +373,14 @@ impl Settings {
         if self.settings_version < 4 && self.start_page == "clipboard" {
             self.start_page = "media".into();
         }
+        // v5: Notifications left the add-ons (it's on wherever Windows lets the
+        // copy read notifications, and its chip in Settings' tabs row switches
+        // it off). One switched off by hand as an add-on stays off, as a hidden
+        // tab. Its old key stays in the file, unread, as keys this version
+        // doesn't know do.
+        if self.settings_version < 5 && self.addons.get("notifications") == Some(&false) && !self.hidden_tabs.iter().any(|k| k == "notifications") {
+            self.hidden_tabs.push("notifications".into());
+        }
         self.settings_version = self.settings_version.max(SETTINGS_VERSION);
         // Step aside is no longer offered: the island stays over maximized windows.
         self.step_aside = false;
@@ -335,6 +395,7 @@ impl Settings {
             self.expanded_width = 620.0;
         }
         self.expanded_width = self.expanded_width.clamp(480.0, 900.0);
+        self.island_x = self.island_x.filter(|x| x.is_finite()).map(|x| x.clamp(0.0, 1.0));
         let p = &mut self.pomodoro;
         p.focus_min = p.focus_min.clamp(1, 180);
         p.short_break_min = p.short_break_min.clamp(1, 60);
@@ -395,6 +456,10 @@ mod tests {
         let s = s.sanitized();
         assert_eq!((s.prayer.place.as_deref(), s.prayer.sound, s.prayer.remind_before_min), (Some("jakarta"), PrayerSound::Adzan, 60));
         assert!(s.prayer.follow_location);
+        assert_eq!(s.prayer.follow, PrayerFollow::Kemenag, "settings from before the choice follow Kemenag");
+        let m: Settings = serde_json::from_str(r#"{"prayer":{"follow":"muhammadiyah"}}"#).unwrap();
+        assert_eq!(m.prayer.follow, PrayerFollow::Muhammadiyah);
+        assert!(serde_json::to_string(&m).unwrap().contains(r#""follow":"muhammadiyah""#));
     }
 
     #[test]
@@ -408,6 +473,34 @@ mod tests {
         assert_eq!(s.theme, Theme::Glass);
         let s: Settings = serde_json::from_str(r#"{"theme":"pill"}"#).unwrap();
         assert_eq!(s.theme, Theme::Pill);
+        let s: Settings = serde_json::from_str(r#"{"theme":"diorama"}"#).unwrap();
+        assert_eq!(s.theme, Theme::Diorama);
+    }
+
+    #[test]
+    fn every_theme_is_written_by_its_name_and_read_back() {
+        // No `_` arm: a theme added to the enum stops this compiling until
+        // it has its name here, and then the loop below asks for it.
+        let name = |t: Theme| match t {
+            Theme::Classic => "classic",
+            Theme::Oyen => "oyen",
+            Theme::Glass => "glass",
+            Theme::Pill => "pill",
+            Theme::Diorama => "diorama",
+        };
+        for theme in [Theme::Classic, Theme::Oyen, Theme::Glass, Theme::Pill, Theme::Diorama] {
+            let s = Settings { theme, ..Settings::default() };
+            let j = serde_json::to_string(&s).unwrap();
+            assert!(j.contains(&format!(r#""theme":"{}""#, name(theme))), "{theme:?}: {j}");
+            let back: Settings = serde_json::from_str(&j).unwrap();
+            assert_eq!(back, s, "{theme:?}");
+            // It survives the clean-up a loaded file goes through.
+            assert_eq!(back.sanitized().theme, theme);
+        }
+        // A theme this version doesn't know is not read as another one: the
+        // file doesn't parse, and `store::load_json` sets it aside for its
+        // backup (or the defaults), as it does a damaged file.
+        assert!(serde_json::from_str::<Settings>(r#"{"theme":"snowglobe"}"#).is_err());
     }
 
     #[test]
@@ -515,6 +608,18 @@ mod tests {
     }
 
     #[test]
+    fn the_island_sits_in_the_middle_until_dragged() {
+        assert_eq!(Settings::default().island_x, None);
+        // Files from before the drag, and hand-edited ones, stay on screen.
+        let old: Settings = serde_json::from_str(r#"{"settings_version":4}"#).unwrap();
+        assert_eq!(old.sanitized().island_x, None);
+        let far: Settings = serde_json::from_str(r#"{"island_x":3.5}"#).unwrap();
+        assert_eq!(far.sanitized().island_x, Some(1.0));
+        let moved: Settings = serde_json::from_str(r#"{"island_x":0.8}"#).unwrap();
+        assert_eq!(moved.sanitized().island_x, Some(0.8));
+    }
+
+    #[test]
     fn the_island_never_steps_aside() {
         assert!(!Settings::default().step_aside);
         // 0.2.4 and 0.2.5 saved Step aside, their default: the island stays now.
@@ -535,6 +640,23 @@ mod tests {
         // A newer Studio's service stays hidden when this one saves the file.
         let back: Settings = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
         assert_eq!(back.usage.hidden, ["codex", "future"]);
+    }
+
+    #[test]
+    fn notifications_switched_off_as_an_add_on_stays_off() {
+        // Until 0.2.24 Notifications was an add-on, off by default. One switched
+        // off by hand stays off, as a hidden tab.
+        let s = serde_json::from_str::<Settings>(r#"{"settings_version":4,"addons":{"notifications":false,"sholat":true}}"#).unwrap().sanitized();
+        assert_eq!(s.hidden_tabs, ["notifications"]);
+        assert!(s.addon_on("sholat"));
+        // Switched on, or never touched: on, like everyone's now.
+        for file in [r#"{"settings_version":4,"addons":{"notifications":true}}"#, r#"{"settings_version":4}"#] {
+            let s = serde_json::from_str::<Settings>(file).unwrap().sanitized();
+            assert!(s.hidden_tabs.is_empty(), "{file}");
+        }
+        // Once only: after that, the tabs row is its switch.
+        let s = serde_json::from_str::<Settings>(r#"{"settings_version":5,"addons":{"notifications":false}}"#).unwrap().sanitized();
+        assert!(s.hidden_tabs.is_empty());
     }
 
     #[test]
